@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger, NestMiddleware } from '@nestjs/common';
 import { AngularSSRService } from './angular-ssr.service';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
-import         { type AngularSSRModuleOptions } from './interfaces';
-import         { type Request, type Response, type NextFunction } from 'express';
+import type { AngularSSRModuleOptions } from './interfaces';
+import type { NextFunction, Request, Response } from 'express';
 
 @Injectable()
 export class AngularSSRMiddleware implements NestMiddleware {
@@ -17,18 +17,21 @@ export class AngularSSRMiddleware implements NestMiddleware {
   async use(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Skip if already handled or if requesting static assets
     if (res.headersSent) {
-      next(); return;
+      next();
+      return;
     }
 
     // Skip static file requests (common extensions)
     const url = req.originalUrl || req.url;
     if (this.isStaticFileRequest(url)) {
-      next(); return;
+      next();
+      return;
     }
 
     // Skip API routes (customize as needed)
     if (url.startsWith('/api')) {
-      next(); return;
+      next();
+      return;
     }
 
     try {
@@ -36,7 +39,8 @@ export class AngularSSRMiddleware implements NestMiddleware {
 
       if (html === null) {
         // No response from Angular, pass to next handler
-        next(); return;
+        next();
+        return;
       }
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');

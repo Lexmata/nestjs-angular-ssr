@@ -1,4 +1,4 @@
-import type                { Request } from 'express';
+import type { Request } from 'express';
 
 /**
  * Interface for implementing custom cache key generation logic

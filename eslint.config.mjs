@@ -188,7 +188,7 @@ export default tseslint.config(
       'import-x/first': 'error',
       'import-x/newline-after-import': 'error',
       'import-x/no-anonymous-default-export': 'warn',
-      'import-x/consistent-type-specifier-style': ['error', 'prefer-inline'],
+      'import-x/consistent-type-specifier-style': ['error', 'prefer-top-level'],
 
       // ============================================
       // Node Plugin Rules
@@ -485,7 +485,7 @@ export default tseslint.config(
             'type',
             'unknown',
           ],
-          newlinesBetween: 'never',
+          newlinesBetween: 0,
           internalPattern: ['^@/', '^~/', '^\\.\\./'],
         },
       ],

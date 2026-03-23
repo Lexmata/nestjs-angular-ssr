@@ -1,4 +1,4 @@
-import type                { AngularSSRModuleOptions } from './interfaces';
+import type { AngularSSRModuleOptions } from './interfaces';
 
 /**
  * Injection token for Express Request object

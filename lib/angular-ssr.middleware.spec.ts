@@ -1,8 +1,8 @@
-import         { type Request, type Response, type NextFunction } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AngularSSRMiddleware } from './angular-ssr.middleware';
-import        { type AngularSSRService } from './angular-ssr.service';
-import         { type AngularSSRModuleOptions } from './interfaces';
+import type { AngularSSRService } from './angular-ssr.service';
+import type { AngularSSRModuleOptions } from './interfaces';
+import type { NextFunction, Request, Response } from 'express';
 
 // Mock Request
 const createMockRequest = (overrides: Partial<Request> = {}): Request =>

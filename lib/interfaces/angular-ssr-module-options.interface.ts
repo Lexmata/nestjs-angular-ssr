@@ -1,7 +1,6 @@
-import { type Request, type Response } from 'express';
-
-import { type CacheKeyGenerator } from './cache-key-generator.interface';
-import { type CacheStorage } from './cache-storage.interface';
+import type { CacheKeyGenerator } from './cache-key-generator.interface';
+import type { CacheStorage } from './cache-storage.interface';
+import type { Request, Response } from 'express';
 
 /**
  * Provider type compatible with Angular's StaticProvider

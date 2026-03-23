@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import         { type CacheEntry } from '../interfaces';
 import { InMemoryCacheStorage } from './in-memory-cache-storage';
+import type { CacheEntry } from '../interfaces';
 
 describe('InMemoryCacheStorage', () => {
   let storage: InMemoryCacheStorage;

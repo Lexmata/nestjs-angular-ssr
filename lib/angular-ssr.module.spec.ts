@@ -1,9 +1,9 @@
-import         { type MiddlewareConsumer } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AngularSSRModule } from './angular-ssr.module';
 import { AngularSSRService } from './angular-ssr.service';
-import         { type AngularSSRModuleOptions, type AngularSSRModuleAsyncOptions } from './interfaces';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
+import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
+import type { MiddlewareConsumer } from '@nestjs/common';
 
 describe('AngularSSRModule', () => {
   let mockOptions: AngularSSRModuleOptions;
@@ -88,6 +88,7 @@ describe('AngularSSRModule', () => {
     });
 
     it('should include imports from async options', () => {
+      // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- token class for Nest imports array
       const mockModule = class MockModule {};
       const asyncOptions: AngularSSRModuleAsyncOptions = {
         imports: [mockModule],

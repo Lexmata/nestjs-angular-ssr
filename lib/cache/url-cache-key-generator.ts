@@ -1,5 +1,5 @@
-import         { type CacheKeyGenerator } from '../interfaces';
-import         { type Request } from 'express';
+import type { CacheKeyGenerator } from '../interfaces';
+import type { Request } from 'express';
 
 /**
  * Default cache key generator based on URL

@@ -10,12 +10,12 @@ import * as express from 'express';
 import { AngularSSRMiddleware } from './angular-ssr.middleware';
 import { AngularSSRService } from './angular-ssr.service';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
-import         { type AngularSSRModuleOptions, type AngularSSRModuleAsyncOptions } from './interfaces';
+import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
 
 @Global()
 @Module({})
 export class AngularSSRModule implements NestModule {
-  private static options: AngularSSRModuleOptions;
+  private static options: AngularSSRModuleOptions | undefined;
 
   /**
    * Configure the module with static options
@@ -46,12 +46,12 @@ export class AngularSSRModule implements NestModule {
         AngularSSRModule.options = resolvedOptions;
         return resolvedOptions;
       },
-      inject: options.inject || [],
+      inject: options.inject ?? [],
     };
 
     return {
       module: AngularSSRModule,
-      imports: options.imports || [],
+      imports: options.imports ?? [],
       providers: [asyncOptionsProvider, AngularSSRService],
       exports: [AngularSSRService, ANGULAR_SSR_OPTIONS],
     };

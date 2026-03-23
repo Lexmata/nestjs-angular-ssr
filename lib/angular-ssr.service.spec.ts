@@ -1,7 +1,7 @@
-import         { type Request, type Response } from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AngularSSRService, DEFAULT_CACHE_EXPIRATION_TIME } from './angular-ssr.service';
-import         { type AngularSSRModuleOptions, type CacheStorage } from './interfaces';
+import type { AngularSSRModuleOptions, CacheStorage } from './interfaces';
+import type { Request, Response } from 'express';
 
 // Mock AngularAppEngine
 const createMockAngularApp = () => ({
@@ -13,8 +13,9 @@ const createMockRequest = (overrides: Partial<Request> = {}): Request =>
   ({
     protocol: 'http',
     get: vi.fn((header: string) => {
-      if (header === 'host') {return 'localhost:3000';}
-      
+      if (header === 'host') {
+        return 'localhost:3000';
+      }
     }),
     hostname: 'localhost',
     originalUrl: '/test-page',

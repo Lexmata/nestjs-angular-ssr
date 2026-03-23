@@ -1,6 +1,6 @@
-import         { type Request } from 'express';
 import { describe, expect, it } from 'vitest';
 import { UrlCacheKeyGenerator } from './url-cache-key-generator';
+import type { Request } from 'express';
 
 describe('UrlCacheKeyGenerator', () => {
   let generator: UrlCacheKeyGenerator;

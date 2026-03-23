@@ -1,4 +1,4 @@
-import type                { CacheEntry, CacheStorage } from '../interfaces';
+import type { CacheEntry, CacheStorage } from '../interfaces';
 
 /**
  * Default in-memory cache storage implementation

@@ -443,6 +443,74 @@ ng add @angular/ssr
 
 Your Angular project should have a server entry point that exports the Angular app engine bootstrap function.
 
+## Project Structure
+
+```
+nestjs-angular-ssr/
+├── lib/
+│   ├── index.ts                          # Public API re-exports
+│   ├── tokens.ts                         # REQUEST / RESPONSE DI tokens
+│   ├── angular-ssr.module.ts             # NestJS dynamic module (forRoot / forRootAsync)
+│   ├── angular-ssr.service.ts            # SSR rendering + cache management
+│   ├── angular-ssr.middleware.ts         # Express middleware for SSR + static files
+│   ├── interfaces/
+│   │   ├── angular-ssr-module-options.interface.ts
+│   │   ├── cache-key-generator.interface.ts
+│   │   └── cache-storage.interface.ts
+│   └── cache/
+│       ├── in-memory-cache-storage.ts    # Default cache backend
+│       └── url-cache-key-generator.ts    # Default cache key strategy
+├── tokens/                               # Secondary entry point for @lexmata/nestjs-angular-ssr/tokens
+├── example/                              # Full working NestJS + Angular SSR example app
+├── docs/                                 # GitHub Pages API docs
+├── .github/
+│   ├── CONTRIBUTING.md                   # Contributor guide
+│   ├── SECURITY.md                       # Security policy
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   ├── ISSUE_TEMPLATE/                   # Bug report + feature request templates
+│   └── workflows/
+│       ├── ci.yml                        # Lint, typecheck, test (Node 18/20/22), build
+│       └── release.yml                   # Publish to npm + GitHub Packages on release
+├── package.json
+├── tsconfig.json
+├── eslint.config.mjs
+├── vitest.config.ts
+└── commitlint.config.mjs
+```
+
+## Testing
+
+```bash
+pnpm test               # Run all tests once
+pnpm test:watch          # Watch mode
+pnpm test:coverage       # Coverage report (V8)
+```
+
+Tests are co-located with source files as `*.spec.ts` in `lib/`.
+
+## Publishing
+
+Publishing is automated via GitHub Actions. When a GitHub release is created:
+
+1. The `release.yml` workflow runs tests and builds the package
+2. Publishes to **npm** (`@lexmata/nestjs-angular-ssr`) using `NPM_TOKEN`
+3. Publishes to **GitHub Packages** using `GITHUB_TOKEN`
+
+To publish manually:
+
+```bash
+pnpm run clean && pnpm run build
+pnpm publish --access public
+```
+
+## Related Repos
+
+| Repo | Relationship |
+|---|---|
+| `lexmata-app-frontend` | Consumer -- uses this module for Angular SSR in the main app |
+| `lexmata-marketing` | Consumer -- uses this module for the marketing site SSR |
+| `lexmata-admin-frontend` | Consumer -- uses this module for the admin panel SSR |
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](.github/CONTRIBUTING.md) for details.
@@ -455,9 +523,9 @@ We welcome contributions! Please see our [Contributing Guide](.github/CONTRIBUTI
 
 ## Support
 
-- 📖 [Documentation](https://github.com/Lexmata/nestjs-angular-ssr#readme)
-- 🐛 [Issue Tracker](https://github.com/Lexmata/nestjs-angular-ssr/issues)
-- 💬 [Discussions](https://github.com/Lexmata/nestjs-angular-ssr/discussions)
+- [Documentation](https://github.com/Lexmata/nestjs-angular-ssr#readme)
+- [Issue Tracker](https://github.com/Lexmata/nestjs-angular-ssr/issues)
+- [Discussions](https://github.com/Lexmata/nestjs-angular-ssr/discussions)
 
 ## License
 

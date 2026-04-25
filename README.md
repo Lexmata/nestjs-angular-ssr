@@ -472,7 +472,11 @@ Transforms run **before** the cache write, so cached HTML reflects the whole pip
 - Scope the caching to routes that don't need per-request transforms via `skipPaths`, or
 - Write a placeholder into the HTML and replace it via a response header / cookie rather than inlining the value.
 
-If any transform throws, the configured `errorHandler` is invoked and no further transforms run; the response falls through to `next(error)` if no handler is set.
+If any transform throws:
+
+1. No further transforms run.
+2. Any headers set by earlier transforms during this pipeline run are reverted — so if transform #1 set `Content-Security-Policy` and transform #2 threw, the error page doesn't inherit a nonce that was never applied. Headers already on the response before the pipeline started (cookies from upstream middleware, `X-Powered-By`, etc.) are preserved. Headers are not restored if they've already been flushed to the wire.
+3. The configured `errorHandler` is invoked; if no handler is set, the error propagates out of `AngularSSRService.render()` and is forwarded to `next(error)` by the middleware layer.
 
 ## Custom Cache Storage
 

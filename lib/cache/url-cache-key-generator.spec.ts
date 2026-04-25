@@ -95,5 +95,11 @@ describe('UrlCacheKeyGenerator', () => {
       );
       expect(key).toBe('GET example.com/products/123');
     });
+
+    it('collapses HEAD to GET so probes share the slot with the real render', () => {
+      const get = generator.generateCacheKey(make({ method: 'GET' }));
+      const head = generator.generateCacheKey(make({ method: 'HEAD' }));
+      expect(head).toBe(get);
+    });
   });
 });

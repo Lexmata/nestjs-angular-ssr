@@ -340,47 +340,33 @@ The defaults use NestJS 11 / Express 5 / path-to-regexp v8 splat syntax: `'{/*sp
 
 ## Request and Response Injection
 
-How you access the Express request/response in your Angular components depends on which engine your Angular SSR setup is using.
+This module wires the same Angular DI tokens that `AngularAppEngine` and `AngularNodeAppEngine` expose natively, so every engine path (including `CommonEngine`) lets you reach the Express `Request` and `Response` from inside Angular components.
 
-### CommonEngine
+- `REQUEST` — a Web Fetch `Request` built from the incoming Express request (URL, method, headers).
+- `REQUEST_CONTEXT` — a plain object `{ request, response }` carrying the raw Express objects for direct access (e.g. to set a status code).
 
-This module registers the Express `Request` and `Response` as per-render Angular providers under the `REQUEST` and `RESPONSE` string tokens:
+Both tokens come from `@angular/core` and are re-exported from this package so consumers don't need a separate Angular import in their NestJS module wiring. The library ships an `SSRRequestContext` type alias for `REQUEST_CONTEXT`.
 
 ```typescript
-import { Component, Inject, Optional, PLATFORM_ID } from '@angular/core';
+import { Component, inject, PLATFORM_ID } from '@angular/core';
 import { isPlatformServer } from '@angular/common';
-import type { Response } from 'express';
-import { RESPONSE } from '@lexmata/nestjs-angular-ssr/tokens';
+import { REQUEST_CONTEXT } from '@lexmata/nestjs-angular-ssr';
+import type { SSRRequestContext } from '@lexmata/nestjs-angular-ssr';
 
 @Component({
   selector: 'app-not-found',
   template: '<h1>404 - Page Not Found</h1>',
 })
 export class NotFoundComponent {
-  constructor(
-    @Inject(PLATFORM_ID) private platformId: object,
-    @Optional() @Inject(RESPONSE) private response: Response | null,
-  ) {
-    if (isPlatformServer(this.platformId) && this.response) {
-      this.response.status(404);
+  private readonly platformId = inject(PLATFORM_ID);
+  private readonly ctx = inject<SSRRequestContext | null>(REQUEST_CONTEXT, { optional: true });
+
+  constructor() {
+    if (isPlatformServer(this.platformId) && this.ctx) {
+      this.ctx.response.status(404);
     }
   }
 }
-```
-
-> **Note**: `REQUEST` and `RESPONSE` are string tokens (`'ANGULAR_SSR_REQUEST'` and `'ANGULAR_SSR_RESPONSE'`).
-
-### AngularNodeAppEngine / AngularAppEngine
-
-The newer engines provide their own `REQUEST` and `REQUEST_CONTEXT` injection tokens via `@angular/ssr` — use those directly. This module forwards `{ response }` as the `requestContext` so you can also retrieve the Express response there:
-
-```typescript
-import { inject } from '@angular/core';
-import { REQUEST_CONTEXT } from '@angular/ssr';
-import type { Response } from 'express';
-
-const ctx = inject<{ response?: Response }>(REQUEST_CONTEXT);
-ctx.response?.status(404);
 ```
 
 ## Debug Logging
@@ -498,18 +484,18 @@ Your Angular project should have a server entry point that exports the Angular a
 nestjs-angular-ssr/
 ├── lib/
 │   ├── index.ts                          # Public API re-exports
-│   ├── tokens.ts                         # REQUEST / RESPONSE DI tokens
+│   ├── tokens.ts                         # ANGULAR_SSR_OPTIONS internal token
 │   ├── angular-ssr.module.ts             # NestJS dynamic module (forRoot / forRootAsync)
 │   ├── angular-ssr.service.ts            # SSR rendering + cache management
 │   ├── angular-ssr.middleware.ts         # Express middleware for SSR + static files
+│   ├── debug-logger.ts                   # ANGULAR_SSR_DEBUG env-gated logger
 │   ├── interfaces/
 │   │   ├── angular-ssr-module-options.interface.ts
 │   │   ├── cache-key-generator.interface.ts
 │   │   └── cache-storage.interface.ts
 │   └── cache/
-│       ├── in-memory-cache-storage.ts    # Default cache backend
+│       ├── in-memory-cache-storage.ts    # Default LRU-bounded cache backend
 │       └── url-cache-key-generator.ts    # Default cache key strategy
-├── tokens/                               # Secondary entry point for @lexmata/nestjs-angular-ssr/tokens
 ├── example/                              # Full working NestJS + Angular SSR example app
 ├── docs/                                 # GitHub Pages API docs
 ├── .github/
@@ -518,7 +504,7 @@ nestjs-angular-ssr/
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── ISSUE_TEMPLATE/                   # Bug report + feature request templates
 │   └── workflows/
-│       ├── ci.yml                        # Lint, typecheck, test (Node 18/20/22), build
+│       ├── ci.yml                        # Lint, typecheck, test (Node 20/22/24), build
 │       └── release.yml                   # Publish to npm + GitHub Packages on release
 ├── package.json
 ├── tsconfig.json

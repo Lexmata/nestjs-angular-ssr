@@ -129,6 +129,21 @@ describe('AngularSSRService', () => {
 
       await expect(service.onModuleInit()).rejects.toThrow('Bootstrap failed');
     });
+
+    it('throws a descriptive error when bootstrap resolves to null', async () => {
+      mockOptions.bootstrap = vi.fn().mockResolvedValue(null);
+      service = new AngularSSRService(mockOptions);
+
+      await expect(service.onModuleInit()).rejects.toThrow(/resolved to null/);
+    });
+
+    it('throws a descriptive error when bootstrap resolves to undefined', async () => {
+      // eslint-disable-next-line unicorn/no-useless-undefined -- we explicitly want to exercise the undefined path
+      mockOptions.bootstrap = vi.fn().mockResolvedValue(undefined);
+      service = new AngularSSRService(mockOptions);
+
+      await expect(service.onModuleInit()).rejects.toThrow(/resolved to undefined/);
+    });
   });
 
   describe('render() — AngularAppEngine path (default fallback)', () => {

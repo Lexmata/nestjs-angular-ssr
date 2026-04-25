@@ -1,8 +1,8 @@
 /**
  * End-to-end test that boots a real NestJS application with the SSR module
- * mounted, then issues real HTTP requests through Express. This exists to
- * catch regressions that mocked unit tests cannot — most importantly, that
- * the wildcard route default (`'*splat'`) is actually accepted by the real
+ * mounted, then issues real HTTP requests through Express. Exists to catch
+ * regressions that mocked unit tests cannot — most importantly, that the
+ * wildcard route default (`'{/*splat}'`) is actually accepted by the real
  * path-to-regexp matcher inside NestJS, not just by a mocked
  * `MiddlewareConsumer`.
  */
@@ -53,7 +53,7 @@ describe('AngularSSRModule (e2e wildcard routing)', () => {
     await app.close();
   });
 
-  it('mounts middleware on the *splat default and serves a GET / through SSR', async () => {
+  it('mounts middleware on the splat default and serves a GET / through SSR', async () => {
     const res = await fetch(`${baseUrl}/`);
     const body = await res.text();
 

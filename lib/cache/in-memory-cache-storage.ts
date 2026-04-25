@@ -1,8 +1,8 @@
 import type { CacheEntry, CacheStorage } from '../interfaces';
 
 /**
- * Default unbounded entry cap. The cache grows up to 1024 distinct keys
- * before evicting the least-recently-used entry on the next `set`.
+ * Default upper bound on cached entries. Once the cache holds this many
+ * distinct keys, the next `set` evicts the least-recently-used entry.
  */
 export const DEFAULT_CACHE_MAX_ENTRIES = 1024;
 

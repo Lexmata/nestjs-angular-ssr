@@ -65,13 +65,24 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    let engine: AngularEngine | null | undefined;
     try {
-      this.angularEngine = (await this.options.bootstrap()) as AngularEngine;
-      this.logger.log(`Angular SSR engine initialized (${this.angularEngine.constructor.name})`);
+      engine = (await this.options.bootstrap()) as AngularEngine | null | undefined;
     } catch (error) {
       this.logger.error('Failed to initialize Angular SSR engine', error);
       throw error;
     }
+    // Surface bad user configuration as a clear message instead of the
+    // `Cannot read properties of null (reading 'constructor')` TypeError
+    // that a bare .constructor.name access would produce.
+    if (engine === null || engine === undefined) {
+      const resolvedTo = engine === null ? 'null' : 'undefined';
+      const message = `AngularSSRModuleOptions.bootstrap() resolved to ${resolvedTo}; expected an AngularAppEngine, AngularNodeAppEngine, or CommonEngine instance.`;
+      this.logger.error(message);
+      throw new Error(message);
+    }
+    this.angularEngine = engine;
+    this.logger.log(`Angular SSR engine initialized (${engine.constructor.name})`);
   }
 
   private resolveCacheOptions(cache: boolean | CacheOptions | undefined): CacheOptions | false {

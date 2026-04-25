@@ -21,6 +21,8 @@ export { ANGULAR_SSR_DEBUG_ENV, DebugLogger, isDebugEnabled } from './debug-logg
 
 // Interfaces
 export type {
+  AfterRenderContext,
+  AfterRenderTransform,
   AngularEngineType,
   AngularSSRModuleAsyncOptions,
   AngularSSRModuleOptions,

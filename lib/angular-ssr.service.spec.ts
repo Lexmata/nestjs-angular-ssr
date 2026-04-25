@@ -548,6 +548,158 @@ describe('AngularSSRService', () => {
     });
   });
 
+  describe('afterRender pipeline', () => {
+    let engine: ReturnType<typeof createAppEngine>;
+
+    beforeEach(() => {
+      engine = createAppEngine();
+      mockOptions = { ...mockOptions, bootstrap: vi.fn().mockResolvedValue(engine) };
+    });
+
+    const mockAngularResponse = (html: string) => ({
+      text: vi.fn().mockResolvedValue(html),
+    });
+
+    it('returns the engine output unchanged when afterRender is unset', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('<html>raw</html>'));
+      service = new AngularSSRService(mockOptions);
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBe(
+        '<html>raw</html>',
+      );
+    });
+
+    it('applies a single transform to the rendered HTML', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('<html>raw</html>'));
+      service = new AngularSSRService({
+        ...mockOptions,
+        afterRender: [(html) => html.replace('raw', 'cooked')],
+      });
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBe(
+        '<html>cooked</html>',
+      );
+    });
+
+    it('pipes transforms in declaration order', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('A'));
+      service = new AngularSSRService({
+        ...mockOptions,
+        afterRender: [(html) => `${html}B`, (html) => `${html}C`, (html) => `${html}D`],
+      });
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBe('ABCD');
+    });
+
+    it('awaits async transforms', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('start'));
+      // A thenable (not a bare value) is returned so the service's `await`
+      // in the pipeline actually has to suspend the microtask queue.
+      const asyncTransform = async (html: string): Promise<string> => `${html}-async`;
+      service = new AngularSSRService({ ...mockOptions, afterRender: [asyncTransform] });
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBe('start-async');
+    });
+
+    it('passes request, response, and url in the context', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('x'));
+      const capture = vi.fn().mockImplementation((html: string) => html);
+      service = new AngularSSRService({ ...mockOptions, afterRender: [capture] });
+      await service.onModuleInit();
+
+      const request = createMockRequest({ originalUrl: '/products/42' });
+      const response = createMockResponse();
+      await service.render(request, response);
+
+      expect(capture).toHaveBeenCalledWith('x', {
+        request,
+        response,
+        url: expect.stringContaining('/products/42'),
+      });
+    });
+
+    it('caches the post-transform HTML, not the raw engine output', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('raw'));
+      const transform = vi.fn().mockImplementation((html: string) => `${html}-cooked`);
+      service = new AngularSSRService({ ...mockOptions, afterRender: [transform] });
+      await service.onModuleInit();
+
+      const req = createMockRequest();
+      const res = createMockResponse();
+
+      expect(await service.render(req, res)).toBe('raw-cooked');
+      // Second call hits the cache; transform does NOT run again.
+      expect(await service.render(req, res)).toBe('raw-cooked');
+
+      expect(transform).toHaveBeenCalledTimes(1);
+      expect(engine.handle).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips transforms when the engine returns null', async () => {
+      engine.handle.mockResolvedValue(null);
+      const transform = vi.fn();
+      service = new AngularSSRService({ ...mockOptions, afterRender: [transform] });
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBeNull();
+      expect(transform).not.toHaveBeenCalled();
+    });
+
+    it('routes transform throws through the configured errorHandler', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      const errorHandler = vi.fn();
+      const boom = new Error('transform failed');
+      service = new AngularSSRService({
+        ...mockOptions,
+        errorHandler,
+        afterRender: [
+          () => {
+            throw boom;
+          },
+        ],
+      });
+      await service.onModuleInit();
+
+      const request = createMockRequest();
+      const response = createMockResponse();
+      const result = await service.render(request, response);
+
+      expect(errorHandler).toHaveBeenCalledWith(boom, request, response);
+      expect(result).toBeNull();
+    });
+
+    it('aborts the pipeline at the first thrown transform', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      const boom = new Error('stop');
+      const second = vi.fn();
+      service = new AngularSSRService({
+        ...mockOptions,
+        afterRender: [
+          () => {
+            throw boom;
+          },
+          second,
+        ],
+      });
+      await service.onModuleInit();
+
+      await expect(service.render(createMockRequest(), createMockResponse())).rejects.toThrow(boom);
+      expect(second).not.toHaveBeenCalled();
+    });
+
+    it('treats an empty afterRender array as a no-op', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      service = new AngularSSRService({ ...mockOptions, afterRender: [] });
+      await service.onModuleInit();
+
+      expect(await service.render(createMockRequest(), createMockResponse())).toBe('ok');
+    });
+  });
+
   describe('error handling', () => {
     let engine: ReturnType<typeof createAppEngine>;
 

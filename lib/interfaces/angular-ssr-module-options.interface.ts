@@ -68,6 +68,39 @@ export type AngularEngineType = 'common' | 'node-app' | 'app';
 export type SkipPath = string | RegExp;
 
 /**
+ * Per-render context passed to `AfterRenderTransform` functions.
+ */
+export interface AfterRenderContext {
+  request: Request;
+  response: Response;
+  /**
+   * The full request URL (protocol + host + originalUrl). Provided so
+   * transforms don't have to reconstruct it from the Express request.
+   */
+  url: string;
+}
+
+/**
+ * A single stage in the post-render HTML transform pipeline. Receives the
+ * HTML emitted by the Angular engine (or the previous transform) and
+ * returns the transformed HTML.
+ *
+ * Transforms may be synchronous or return a `Promise`. They run in the
+ * order they're declared in `afterRender`. If any transform throws, the
+ * configured `errorHandler` is invoked and no further transforms run.
+ *
+ * **Cache interaction**: transforms run BEFORE the cache write, so the
+ * cached HTML is the post-transform output. If a transform produces
+ * per-request output (e.g. a CSP nonce), disable caching for that route
+ * via `skipPaths` or `cache: false`, or inject a stable placeholder and
+ * replace it on the way out via the `response` (set cookie, header, etc.).
+ */
+export type AfterRenderTransform = (
+  html: string,
+  context: AfterRenderContext,
+) => string | Promise<string>;
+
+/**
  * Angular SSR engine instance type.
  * Supports AngularAppEngine, AngularNodeAppEngine, or CommonEngine.
  */
@@ -176,6 +209,17 @@ export interface AngularSSRModuleOptions {
    * contract on writing responses.
    */
   errorHandler?: ErrorHandler;
+
+  /**
+   * Ordered pipeline of post-render HTML transforms. Each transform sees
+   * the output of the previous one and can mutate the HTML string (inject
+   * a CSP nonce, add tracking tags, minify, rewrite asset paths, etc.).
+   *
+   * Transforms run BEFORE the cache write, so cached HTML reflects the
+   * transforms. If a transform produces per-request output that shouldn't
+   * be cached (e.g. a CSP nonce), disable caching for affected routes.
+   */
+  afterRender?: AfterRenderTransform[];
 }
 
 /**

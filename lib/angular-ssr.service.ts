@@ -139,7 +139,9 @@ export class AngularSSRService implements OnModuleInit {
     }
 
     try {
-      const html = await this.invokeEngine(this.angularEngine, request, response);
+      const rendered = await this.invokeEngine(this.angularEngine, request, response);
+      const html =
+        rendered === null ? null : await this.applyAfterRender(rendered, request, response);
 
       if (cacheKey !== null && html) {
         await this.cacheStorage.set(cacheKey, {
@@ -222,6 +224,28 @@ export class AngularSSRService implements OnModuleInit {
       return null;
     }
     return await angularResponse.text();
+  }
+
+  /**
+   * Run the configured `afterRender` pipeline against the engine's HTML
+   * output. Each transform sees the previous transform's result; the
+   * final value is what the service caches (if cacheable) and returns.
+   */
+  private async applyAfterRender(
+    html: string,
+    request: Request,
+    response: Response,
+  ): Promise<string> {
+    const transforms = this.options.afterRender;
+    if (!transforms?.length) {
+      return html;
+    }
+    const context = { request, response, url: this.getRequestUrl(request) };
+    let current = html;
+    for (const transform of transforms) {
+      current = await transform(current, context);
+    }
+    return current;
   }
 
   /**

@@ -241,6 +241,13 @@ export class AngularSSRService implements OnModuleInit {
    *
    * Null input (the "engine produced no response" path) short-circuits —
    * transforms never see `null`.
+   *
+   * **Header isolation:** transforms commonly call `response.setHeader`
+   * (e.g. the CSP nonce pattern). If a LATER transform throws, the
+   * response headers touched by earlier transforms would otherwise leak
+   * into the error-page response — so we snapshot headers before the
+   * loop and restore the snapshot on throw, leaving the response in the
+   * state it was in before the pipeline started.
    */
   private async applyAfterRender(
     html: string | null,
@@ -250,11 +257,18 @@ export class AngularSSRService implements OnModuleInit {
     if (html === null || !transforms?.length) {
       return html;
     }
+    const { response } = context;
+    const snapshot = response.getHeaders();
     let current = html;
-    for (const transform of transforms) {
-      current = await transform(current, context);
+    try {
+      for (const transform of transforms) {
+        current = await transform(current, context);
+      }
+      return current;
+    } catch (error) {
+      restoreHeaders(response, snapshot);
+      throw error;
     }
-    return current;
   }
 
   /**
@@ -292,5 +306,34 @@ export class AngularSSRService implements OnModuleInit {
       return await this.cacheStorage.delete(key);
     }
     return false;
+  }
+}
+
+/**
+ * Restore `response`'s headers to `snapshot`: re-apply every name that was
+ * present in the snapshot (even if unchanged — cheap), and remove any name
+ * that a transform added but the snapshot didn't have. Pre-existing values
+ * take precedence so downstream middleware (`X-Powered-By` from Express,
+ * auth cookies set upstream) survive a pipeline throw intact.
+ *
+ * Headers may already be flushed when this runs; Node's ServerResponse
+ * tolerates `setHeader` / `removeHeader` after send by throwing, so we
+ * bail out early when `headersSent` is true — the response is already
+ * out the door and there's nothing to restore.
+ */
+function restoreHeaders(response: Response, snapshot: ReturnType<Response['getHeaders']>): void {
+  if (response.headersSent) {
+    return;
+  }
+  const snapshotNames = new Set(Object.keys(snapshot));
+  for (const name of response.getHeaderNames()) {
+    if (!snapshotNames.has(name)) {
+      response.removeHeader(name);
+    }
+  }
+  for (const [name, value] of Object.entries(snapshot)) {
+    if (value !== undefined) {
+      response.setHeader(name, value);
+    }
   }
 }

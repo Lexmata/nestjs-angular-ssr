@@ -58,12 +58,25 @@ const createMockRequest = (overrides: Partial<Request> = {}): Request =>
     ...overrides,
   }) as unknown as Request;
 
-const createMockResponse = (): Response =>
-  ({
-    setHeader: vi.fn(),
+const createMockResponse = (): Response => {
+  // In-memory Node-ish header store so `applyAfterRender`'s
+  // snapshot/restore logic can be exercised end-to-end.
+  const headers = new Map<string, string | string[] | number>();
+  return {
+    headersSent: false,
+    setHeader: vi.fn((name: string, value: string | string[] | number) => {
+      headers.set(name.toLowerCase(), value);
+    }),
+    removeHeader: vi.fn((name: string) => {
+      headers.delete(name.toLowerCase());
+    }),
+    getHeader: vi.fn((name: string) => headers.get(name.toLowerCase())),
+    getHeaderNames: vi.fn(() => [...headers.keys()]),
+    getHeaders: vi.fn(() => Object.fromEntries(headers)),
     send: vi.fn(),
     status: vi.fn().mockReturnThis(),
-  }) as unknown as Response;
+  } as unknown as Response;
+};
 
 describe('AngularSSRService', () => {
   let service: AngularSSRService;
@@ -692,6 +705,111 @@ describe('AngularSSRService', () => {
 
       await expect(service.render(createMockRequest(), createMockResponse())).rejects.toThrow(boom);
       expect(second).not.toHaveBeenCalled();
+    });
+
+    it('restores headers set by earlier transforms when a later transform throws', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      const errorHandler = vi.fn();
+      service = new AngularSSRService({
+        ...mockOptions,
+        errorHandler,
+        afterRender: [
+          (html, { response }) => {
+            response.setHeader('Content-Security-Policy', 'nonce-abc');
+            response.setHeader('X-Transform-1', 'applied');
+            return html;
+          },
+          () => {
+            throw new Error('boom');
+          },
+        ],
+      });
+      await service.onModuleInit();
+
+      const response = createMockResponse();
+      await service.render(createMockRequest(), response);
+
+      expect(response.getHeader('Content-Security-Policy')).toBeUndefined();
+      expect(response.getHeader('X-Transform-1')).toBeUndefined();
+    });
+
+    it('preserves headers set before the pipeline runs', async () => {
+      // Headers set by upstream middleware (e.g. cookies, X-Powered-By)
+      // must survive a pipeline throw.
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      const errorHandler = vi.fn();
+      service = new AngularSSRService({
+        ...mockOptions,
+        errorHandler,
+        afterRender: [
+          (html, { response }) => {
+            response.setHeader('X-Added-By-Transform', 'yes');
+            return html;
+          },
+          () => {
+            throw new Error('boom');
+          },
+        ],
+      });
+      await service.onModuleInit();
+
+      const response = createMockResponse();
+      response.setHeader('Set-Cookie', 'session=abc');
+      response.setHeader('X-Powered-By', 'Express');
+
+      await service.render(createMockRequest(), response);
+
+      expect(response.getHeader('Set-Cookie')).toBe('session=abc');
+      expect(response.getHeader('X-Powered-By')).toBe('Express');
+      expect(response.getHeader('X-Added-By-Transform')).toBeUndefined();
+    });
+
+    it('keeps headers set by successful transforms on the happy path', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      service = new AngularSSRService({
+        ...mockOptions,
+        afterRender: [
+          (html, { response }) => {
+            response.setHeader('X-Transformed', 'true');
+            return html;
+          },
+        ],
+      });
+      await service.onModuleInit();
+
+      const response = createMockResponse();
+      await service.render(createMockRequest(), response);
+
+      expect(response.getHeader('X-Transformed')).toBe('true');
+    });
+
+    it('skips header restoration once headers are already flushed', async () => {
+      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
+      const errorHandler = vi.fn();
+      service = new AngularSSRService({
+        ...mockOptions,
+        errorHandler,
+        afterRender: [
+          (html, { response }) => {
+            response.setHeader('Content-Security-Policy', 'nonce-abc');
+            // Simulate a transform that flushed headers before the next one throws.
+            (response as unknown as { headersSent: boolean }).headersSent = true;
+            return html;
+          },
+          () => {
+            throw new Error('boom');
+          },
+        ],
+      });
+      await service.onModuleInit();
+
+      const response = createMockResponse();
+      await service.render(createMockRequest(), response);
+
+      // Header persists because Node's ServerResponse can't remove headers
+      // after flush anyway — restoring would throw.
+      expect(response.getHeader('Content-Security-Policy')).toBe('nonce-abc');
+      expect(response.removeHeader).not.toHaveBeenCalled();
     });
   });
 

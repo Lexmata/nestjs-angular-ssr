@@ -200,7 +200,7 @@ export default tseslint.config(
       'n/no-unsupported-features/es-syntax': 'off', // Using TypeScript
       'n/no-unsupported-features/node-builtins': [
         'error',
-        { version: '>=18.0.0' },
+        { version: '>=20.0.0' },
       ],
       'n/prefer-global/buffer': ['error', 'always'],
       'n/prefer-global/console': ['error', 'always'],

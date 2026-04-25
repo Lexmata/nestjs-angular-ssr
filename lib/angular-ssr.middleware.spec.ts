@@ -4,16 +4,14 @@ import type { AngularSSRService } from './angular-ssr.service';
 import type { AngularSSRModuleOptions } from './interfaces';
 import type { NextFunction, Request, Response } from 'express';
 
-// Mock Request
 const createMockRequest = (overrides: Partial<Request> = {}): Request =>
   ({
+    method: 'GET',
     originalUrl: '/test-page',
     url: '/test-page',
-    method: 'GET',
     ...overrides,
   }) as unknown as Request;
 
-// Mock Response
 const createMockResponse = (overrides: Partial<Response> = {}): Response =>
   ({
     headersSent: false,
@@ -67,6 +65,94 @@ describe('AngularSSRMiddleware', () => {
 
       expect(mockNext).toHaveBeenCalled();
       expect(mockSSRService.render).not.toHaveBeenCalled();
+    });
+
+    describe('non-GET methods', () => {
+      for (const method of ['POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']) {
+        it(`bypasses SSR for ${method}`, async () => {
+          const request = createMockRequest({ method });
+          const response = createMockResponse();
+
+          await middleware.use(request, response, mockNext);
+
+          expect(mockNext).toHaveBeenCalled();
+          expect(mockSSRService.render).not.toHaveBeenCalled();
+        });
+      }
+
+      it('renders for HEAD', async () => {
+        mockSSRService.render.mockResolvedValue('<html></html>');
+        const request = createMockRequest({ method: 'HEAD' });
+        const response = createMockResponse();
+
+        await middleware.use(request, response, mockNext);
+
+        expect(mockSSRService.render).toHaveBeenCalled();
+      });
+    });
+
+    describe('configurable skipPaths', () => {
+      it('respects a custom string prefix', async () => {
+        middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
+          ...mockOptions,
+          skipPaths: ['/internal'],
+        });
+        const request = createMockRequest({ originalUrl: '/internal/secrets' });
+        const response = createMockResponse();
+
+        await middleware.use(request, response, mockNext);
+
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockSSRService.render).not.toHaveBeenCalled();
+      });
+
+      it('respects a regular expression', async () => {
+        middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
+          ...mockOptions,
+          skipPaths: [/^\/v\d+\//],
+        });
+        const request = createMockRequest({ originalUrl: '/v1/data' });
+        const response = createMockResponse();
+
+        await middleware.use(request, response, mockNext);
+
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockSSRService.render).not.toHaveBeenCalled();
+      });
+
+      it('does not apply default /api skip when skipPaths is empty', async () => {
+        mockSSRService.render.mockResolvedValue('<html></html>');
+        middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
+          ...mockOptions,
+          skipPaths: [],
+        });
+        const request = createMockRequest({ originalUrl: '/api/users' });
+        const response = createMockResponse();
+
+        await middleware.use(request, response, mockNext);
+
+        expect(mockSSRService.render).toHaveBeenCalled();
+      });
+
+      it('emits a bypass debug log when ANGULAR_SSR_DEBUG is enabled', async () => {
+        const request = createMockRequest({ originalUrl: '/api/anything' });
+        const response = createMockResponse();
+
+        const previous = process.env.ANGULAR_SSR_DEBUG;
+        process.env.ANGULAR_SSR_DEBUG = '1';
+        try {
+          await middleware.use(request, response, mockNext);
+        } finally {
+          if (previous === undefined) {
+            Reflect.deleteProperty(process.env, 'ANGULAR_SSR_DEBUG');
+          } else {
+            process.env.ANGULAR_SSR_DEBUG = previous;
+          }
+        }
+
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockSSRService.render).not.toHaveBeenCalled();
+      });
     });
 
     describe('static file requests', () => {
@@ -142,7 +228,22 @@ describe('AngularSSRMiddleware', () => {
       expect(mockNext).not.toHaveBeenCalled();
     });
 
-    it('should call next when render returns null', async () => {
+    it('does not double-respond when service.render() already wrote a response', async () => {
+      const response = createMockResponse({ headersSent: false });
+      mockSSRService.render.mockImplementation(() => {
+        (response as unknown as { headersSent: boolean }).headersSent = true;
+        return Promise.resolve(null);
+      });
+
+      const request = createMockRequest();
+
+      await middleware.use(request, response, mockNext);
+
+      expect(mockNext).not.toHaveBeenCalled();
+      expect(response.send).not.toHaveBeenCalled();
+    });
+
+    it('should call next when render returns null without writing response', async () => {
       mockSSRService.render.mockResolvedValue(null);
 
       const request = createMockRequest();
@@ -167,26 +268,66 @@ describe('AngularSSRMiddleware', () => {
       expect(mockNext).toHaveBeenCalledWith(error);
     });
 
-    it('should not call next when error handler is set and called', async () => {
+    it('invokes errorHandler when render throws (regression: middleware used to silently hang)', async () => {
       const error = new Error('Render error');
       mockSSRService.render.mockRejectedValue(error);
 
-      const errorHandler = vi.fn();
-      const optionsWithHandler: AngularSSRModuleOptions = {
+      const errorHandler = vi.fn((_e, _req, res: Response) => {
+        res.status(500).send('error page');
+        (res as unknown as { headersSent: boolean }).headersSent = true;
+      });
+      middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
         ...mockOptions,
         errorHandler,
-      };
-      middleware = new AngularSSRMiddleware(
-        mockSSRService as unknown as AngularSSRService,
-        optionsWithHandler,
-      );
+      });
 
       const request = createMockRequest();
       const response = createMockResponse();
 
       await middleware.use(request, response, mockNext);
 
+      expect(errorHandler).toHaveBeenCalledWith(error, request, response);
       expect(mockNext).not.toHaveBeenCalled();
+    });
+
+    it('still forwards to next() when errorHandler is set but did not write a response', async () => {
+      const error = new Error('Render error');
+      mockSSRService.render.mockRejectedValue(error);
+
+      const errorHandler = vi.fn();
+      middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
+        ...mockOptions,
+        errorHandler,
+      });
+
+      const request = createMockRequest();
+      const response = createMockResponse();
+
+      await middleware.use(request, response, mockNext);
+
+      expect(errorHandler).toHaveBeenCalled();
+      expect(mockNext).toHaveBeenCalledWith(error);
+    });
+
+    it('logs but does not crash when the user errorHandler itself throws', async () => {
+      const error = new Error('Render error');
+      mockSSRService.render.mockRejectedValue(error);
+
+      const errorHandler = vi.fn(() => {
+        throw new Error('handler exploded');
+      });
+      middleware = new AngularSSRMiddleware(mockSSRService as unknown as AngularSSRService, {
+        ...mockOptions,
+        errorHandler,
+      });
+
+      const request = createMockRequest();
+      const response = createMockResponse();
+
+      await middleware.use(request, response, mockNext);
+
+      // headersSent stayed false → still hand to next() with the original error.
+      expect(mockNext).toHaveBeenCalledWith(error);
     });
 
     it('should use url fallback when originalUrl is undefined', async () => {

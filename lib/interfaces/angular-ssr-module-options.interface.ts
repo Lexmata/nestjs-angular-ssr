@@ -1,19 +1,14 @@
 import type { CacheKeyGenerator } from './cache-key-generator.interface';
 import type { CacheStorage } from './cache-storage.interface';
+import type { StaticProvider as AngularStaticProvider } from '@angular/core';
 import type { Request, Response } from 'express';
 
 /**
- * Provider type compatible with Angular's StaticProvider
+ * Provider type alias for Angular's `StaticProvider`. Re-exported so
+ * consumers can write `extraProviders` without a separate `@angular/core`
+ * import.
  */
-export interface StaticProvider {
-  provide: unknown;
-  useValue?: unknown;
-  useClass?: unknown;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-  useFactory?: Function;
-  deps?: unknown[];
-  multi?: boolean;
-}
+export type StaticProvider = AngularStaticProvider;
 
 /**
  * Cache configuration options for Angular SSR
@@ -36,16 +31,45 @@ export interface CacheOptions {
    * @default URL-based key generator
    */
   keyGenerator?: CacheKeyGenerator;
+
+  /**
+   * Maximum entries kept by the default `InMemoryCacheStorage` before LRU
+   * eviction kicks in. Ignored when a custom `storage` is supplied.
+   *
+   * @default 1024
+   */
+  maxEntries?: number;
 }
 
 /**
- * Error handler function type for SSR rendering errors
+ * Error handler function type for SSR rendering errors.
+ * If the handler writes a response (e.g. res.status(500).send(...)) the
+ * middleware detects res.headersSent and stops the chain. If it does not,
+ * the original error is forwarded to next() so Nest can handle it.
  */
 export type ErrorHandler = (error: Error, request: Request, response: Response) => void;
 
 /**
- * Angular SSR engine type
- * Supports AngularAppEngine, AngularNodeAppEngine, or CommonEngine
+ * Angular SSR engine variant.
+ *
+ * Used as an explicit override when constructor-name detection is unreliable
+ * (e.g. in heavily minified production bundles where class names are mangled).
+ *
+ * - `common` — `CommonEngine` from `@angular/ssr/node`
+ * - `node-app` — `AngularNodeAppEngine` from `@angular/ssr/node`
+ * - `app` — `AngularAppEngine` from `@angular/ssr`
+ */
+export type AngularEngineType = 'common' | 'node-app' | 'app';
+
+/**
+ * Path-skip rule for the SSR middleware. Paths matching any of these are
+ * passed straight to next() without invoking SSR.
+ */
+export type SkipPath = string | RegExp;
+
+/**
+ * Angular SSR engine instance type.
+ * Supports AngularAppEngine, AngularNodeAppEngine, or CommonEngine.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type AngularSSREngine = any;
@@ -55,72 +79,101 @@ export type AngularSSREngine = any;
  */
 export interface AngularSSRModuleOptions {
   /**
-   * Path to the directory containing the client bundle (Angular browser build)
-   * This is typically 'dist/{app-name}/browser'
+   * Path to the directory containing the client bundle (Angular browser build).
+   * Typically `dist/{app-name}/browser`.
    */
   browserDistFolder: string;
 
   /**
-   * Path to the server bundle bootstrap function
-   * This should be the path to the server entry point
+   * Path to the server bundle directory.
    */
   serverDistFolder?: string;
 
   /**
-   * Path to the index.html template file
-   * @default '{browserDistFolder}/index.server.html'
+   * Path to the index.html template file.
+   * @default `{browserDistFolder}/index.server.html`
    */
   indexHtml?: string;
 
   /**
-   * The Angular bootstrap function from the server bundle
-   * This is the default export from your Angular SSR server entry
-   * For CommonEngine: returns the CommonEngine instance
-   * For AngularAppEngine/AngularNodeAppEngine: returns the engine instance
+   * Returns the Angular SSR engine instance.
+   *
+   * For `CommonEngine`: return the `CommonEngine` instance.
+   * For `AngularAppEngine` / `AngularNodeAppEngine`: return the engine instance.
    */
   bootstrap: () => Promise<AngularSSREngine>;
 
   /**
-   * The Angular application bootstrap function for CommonEngine
-   * Required when using CommonEngine
-   * This should be the bootstrapApplication function from your main.server.ts
+   * Application bootstrap function used by `CommonEngine`.
+   * Should be the `bootstrapApplication`-returning default export from
+   * `main.server.ts`.
+   *
+   * Ignored for `AngularAppEngine` and `AngularNodeAppEngine`.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   angularBootstrap?: () => Promise<any>;
 
   /**
-   * Route path to render the Angular app
-   * @default '*'
+   * Explicit engine type override. When set, disables runtime detection.
+   * Recommended for production builds where class names may be minified.
+   */
+  engineType?: AngularEngineType;
+
+  /**
+   * Route path(s) on which the SSR middleware will run. Default
+   * `'{/*splat}'` is the NestJS 11 / Express 5 / path-to-regexp v8 splat
+   * pattern that matches both root `/` and every nested path.
+   *
+   * @default '{/*splat}'
    */
   renderPath?: string | string[];
 
   /**
-   * Root path for serving static files
-   * @default '*'
+   * Route path on which `express.static()` will serve files from
+   * `browserDistFolder`.
+   *
+   * Same wildcard caveats apply as for `renderPath`.
+   *
+   * @default '{/*splat}'
    */
   rootStaticPath?: string;
 
   /**
-   * Additional providers to be included during server-side rendering
+   * Paths to skip in the SSR middleware (passed straight to `next()`).
+   * Useful for API prefixes that share the wildcard render path.
+   *
+   * @default ['/api']
+   */
+  skipPaths?: SkipPath[];
+
+  /**
+   * Additional providers to be included during server-side rendering.
+   * Only applied to the `CommonEngine` path.
    */
   extraProviders?: StaticProvider[];
 
   /**
-   * Whether to inline critical CSS to reduce render-blocking
+   * Whether to inline critical CSS to reduce render-blocking.
+   * Only applied to the `CommonEngine` path; `AngularAppEngine`/
+   * `AngularNodeAppEngine` handle this internally per their own config.
+   *
    * @default true
    */
   inlineCriticalCss?: boolean;
 
   /**
-   * Cache configuration
-   * Set to false to disable caching, true for default caching,
-   * or provide custom cache options
+   * Cache configuration. `false` disables caching, `true` uses defaults,
+   * or pass `CacheOptions` for fine-grained control.
+   *
+   * Only `GET` and `HEAD` requests are ever cached.
+   *
    * @default true
    */
   cache?: boolean | CacheOptions;
 
   /**
-   * Custom error handler for rendering errors
+   * Custom error handler for rendering errors. See `ErrorHandler` for the
+   * contract on writing responses.
    */
   errorHandler?: ErrorHandler;
 }

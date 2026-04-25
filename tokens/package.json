@@ -1,4 +1,0 @@
-{
-  "main": "../dist/tokens.js",
-  "types": "../dist/tokens.d.ts"
-}

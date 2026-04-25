@@ -226,4 +226,67 @@ describe('InMemoryCacheStorage', () => {
       expect(storage.size).toBe(0);
     });
   });
+
+  describe('LRU eviction', () => {
+    const fresh = (suffix: string): CacheEntry => ({
+      content: `<html>${suffix}</html>`,
+      expiresAt: Date.now() + 60_000,
+    });
+
+    it('evicts the least-recently-used entry when over capacity', () => {
+      const bounded = new InMemoryCacheStorage(2);
+      bounded.set('a', fresh('a'));
+      bounded.set('b', fresh('b'));
+      bounded.set('c', fresh('c'));
+
+      expect(bounded.size).toBe(2);
+      expect(bounded.has('a')).toBe(false);
+      expect(bounded.has('b')).toBe(true);
+      expect(bounded.has('c')).toBe(true);
+    });
+
+    it('promotes an entry to most-recently-used on get()', () => {
+      const bounded = new InMemoryCacheStorage(2);
+      bounded.set('a', fresh('a'));
+      bounded.set('b', fresh('b'));
+
+      // Touch 'a' so 'b' becomes the LRU candidate.
+      bounded.get('a');
+      bounded.set('c', fresh('c'));
+
+      expect(bounded.has('a')).toBe(true);
+      expect(bounded.has('b')).toBe(false);
+      expect(bounded.has('c')).toBe(true);
+    });
+
+    it('refreshes recency on a duplicate set()', () => {
+      const bounded = new InMemoryCacheStorage(2);
+      bounded.set('a', fresh('a'));
+      bounded.set('b', fresh('b'));
+      bounded.set('a', fresh('a-v2'));
+      bounded.set('c', fresh('c'));
+
+      expect(bounded.has('a')).toBe(true);
+      expect(bounded.has('b')).toBe(false);
+      expect(bounded.has('c')).toBe(true);
+      expect(bounded.get('a')?.content).toBe('<html>a-v2</html>');
+    });
+
+    it('does not bound size when maxEntries=0', () => {
+      const unbounded = new InMemoryCacheStorage(0);
+      for (let i = 0; i < 50; i += 1) {
+        unbounded.set(`k${String(i)}`, fresh(`v${String(i)}`));
+      }
+      expect(unbounded.size).toBe(50);
+    });
+
+    it('uses the documented default cap when no argument is given', () => {
+      // 1024 is the default; assert smaller-than-default does not evict.
+      const defaulted = new InMemoryCacheStorage();
+      for (let i = 0; i < 100; i += 1) {
+        defaulted.set(`k${String(i)}`, fresh(`v${String(i)}`));
+      }
+      expect(defaulted.size).toBe(100);
+    });
+  });
 });

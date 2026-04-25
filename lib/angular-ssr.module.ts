@@ -1,28 +1,38 @@
 import {
   DynamicModule,
   Global,
+  Inject,
   MiddlewareConsumer,
   Module,
   NestModule,
   Provider,
 } from '@nestjs/common';
-import * as express from 'express';
+import express from 'express';
 import { AngularSSRMiddleware } from './angular-ssr.middleware';
 import { AngularSSRService } from './angular-ssr.service';
+import { DebugLogger } from './debug-logger';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
+
+// '{/*splat}' is the NestJS 11 / Express 5 / path-to-regexp v8 splat
+// syntax that matches both '/' and every nested path. Override via
+// renderPath / rootStaticPath for a tighter mount point.
+const DEFAULT_WILDCARD = '{/*splat}';
 
 @Global()
 @Module({})
 export class AngularSSRModule implements NestModule {
-  private static options: AngularSSRModuleOptions | undefined;
+  private readonly logger = new DebugLogger(AngularSSRModule.name);
+
+  constructor(
+    @Inject(ANGULAR_SSR_OPTIONS)
+    private readonly options: AngularSSRModuleOptions,
+  ) {}
 
   /**
    * Configure the module with static options
    */
   static forRoot(options: AngularSSRModuleOptions): DynamicModule {
-    AngularSSRModule.options = options;
-
     const optionsProvider: Provider = {
       provide: ANGULAR_SSR_OPTIONS,
       useValue: options,
@@ -30,7 +40,7 @@ export class AngularSSRModule implements NestModule {
 
     return {
       module: AngularSSRModule,
-      providers: [optionsProvider, AngularSSRService],
+      providers: [optionsProvider, AngularSSRService, AngularSSRMiddleware],
       exports: [AngularSSRService, ANGULAR_SSR_OPTIONS],
     };
   }
@@ -41,60 +51,46 @@ export class AngularSSRModule implements NestModule {
   static forRootAsync(options: AngularSSRModuleAsyncOptions): DynamicModule {
     const asyncOptionsProvider: Provider = {
       provide: ANGULAR_SSR_OPTIONS,
-      useFactory: async (...args: unknown[]) => {
-        const resolvedOptions = await options.useFactory(...args);
-        AngularSSRModule.options = resolvedOptions;
-        return resolvedOptions;
-      },
+      useFactory: async (...args: unknown[]) => await options.useFactory(...args),
       inject: options.inject ?? [],
     };
 
     return {
       module: AngularSSRModule,
       imports: options.imports ?? [],
-      providers: [asyncOptionsProvider, AngularSSRService],
+      providers: [asyncOptionsProvider, AngularSSRService, AngularSSRMiddleware],
       exports: [AngularSSRService, ANGULAR_SSR_OPTIONS],
     };
   }
 
   configure(consumer: MiddlewareConsumer): void {
-    const options = AngularSSRModule.options;
+    const renderPaths = this.getRenderPaths(this.options);
+    const staticPath =
+      typeof this.options.rootStaticPath === 'string'
+        ? this.options.rootStaticPath
+        : DEFAULT_WILDCARD;
 
-    if (!options) {
-      throw new Error('AngularSSRModule options not configured. Use forRoot() or forRootAsync().');
-    }
-
-    // Determine render paths
-    const renderPaths = this.getRenderPaths(options);
-
-    // Serve static files from the browser distribution folder
-    const staticPath = typeof options.rootStaticPath === 'string' ? options.rootStaticPath : '*';
+    this.logger.debug(`configure() staticPath=${staticPath} renderPaths=${renderPaths.join(',')}`);
 
     consumer
       .apply(
-        express.static(options.browserDistFolder, {
+        express.static(this.options.browserDistFolder, {
           maxAge: '1y',
           index: false, // Don't serve index.html for directory requests
         }),
       )
       .forRoutes(staticPath);
 
-    // Apply SSR middleware for render paths
     consumer.apply(AngularSSRMiddleware).forRoutes(...renderPaths);
   }
 
-  /**
-   * Get the render paths from options
-   */
   private getRenderPaths(options: AngularSSRModuleOptions): string[] {
     if (!options.renderPath) {
-      return ['*'];
+      return [DEFAULT_WILDCARD];
     }
-
     if (Array.isArray(options.renderPath)) {
       return options.renderPath;
     }
-
     return [options.renderPath];
   }
 }

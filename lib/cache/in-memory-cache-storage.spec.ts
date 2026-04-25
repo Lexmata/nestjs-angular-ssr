@@ -97,8 +97,10 @@ describe('InMemoryCacheStorage', () => {
   });
 
   describe('delete()', () => {
-    it('should return false for non-existent key', () => {
-      expect(storage.delete('non-existent')).toBe(false);
+    it('should return true for non-existent key (matches CacheStorage contract)', () => {
+      // CacheStorage.delete() returns true on successful completion,
+      // not "true iff a key existed." Missing keys are not an error.
+      expect(storage.delete('non-existent')).toBe(true);
     });
 
     it('should delete entry and return true', () => {

@@ -68,6 +68,29 @@ export type AngularEngineType = 'common' | 'node-app' | 'app';
 export type SkipPath = string | RegExp;
 
 /**
+ * Per-render context passed to `AfterRenderTransform` functions.
+ */
+export interface AfterRenderContext {
+  request: Request;
+  response: Response;
+  /**
+   * The full request URL (protocol + host + originalUrl). Provided so
+   * transforms don't have to reconstruct it from the Express request.
+   */
+  url: string;
+}
+
+/**
+ * A single stage in the post-render HTML transform pipeline. See the
+ * `afterRender` option on `AngularSSRModuleOptions` for pipeline
+ * semantics and cache interaction.
+ */
+export type AfterRenderTransform = (
+  html: string,
+  context: AfterRenderContext,
+) => string | Promise<string>;
+
+/**
  * Angular SSR engine instance type.
  * Supports AngularAppEngine, AngularNodeAppEngine, or CommonEngine.
  */
@@ -176,6 +199,17 @@ export interface AngularSSRModuleOptions {
    * contract on writing responses.
    */
   errorHandler?: ErrorHandler;
+
+  /**
+   * Ordered pipeline of post-render HTML transforms. Each transform sees
+   * the output of the previous one and can mutate the HTML string (inject
+   * a CSP nonce, add tracking tags, minify, rewrite asset paths, etc.).
+   *
+   * Transforms run BEFORE the cache write, so cached HTML reflects the
+   * transforms. If a transform produces per-request output that shouldn't
+   * be cached (e.g. a CSP nonce), disable caching for affected routes.
+   */
+  afterRender?: AfterRenderTransform[];
 }
 
 /**

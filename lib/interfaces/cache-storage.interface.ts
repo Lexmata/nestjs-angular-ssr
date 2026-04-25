@@ -32,7 +32,14 @@ export interface CacheStorage {
   set(key: string, entry: CacheEntry): Promise<void> | void;
 
   /**
-   * Remove an entry from the cache
+   * Remove an entry from the cache.
+   *
+   * Returns `true` when the operation completed successfully. This mirrors
+   * `cache-manager` / Redis semantics — a missing key is not an error, so
+   * implementations SHOULD return `true` regardless of whether a key was
+   * actually removed. Callers that need "was a key removed?" information
+   * should call `has()` first.
+   *
    * @param key The cache key to remove
    */
   delete(key: string): Promise<boolean> | boolean;

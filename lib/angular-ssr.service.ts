@@ -12,6 +12,7 @@ import { UrlCacheKeyGenerator } from './cache/url-cache-key-generator';
 import { DebugLogger } from './debug-logger';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type {
+  AfterRenderContext,
   AngularSSRModuleOptions,
   CacheKeyGenerator,
   CacheOptions,
@@ -138,8 +139,15 @@ export class AngularSSRService implements OnModuleInit {
       }
     }
 
+    // URL is computed once per render and passed through. Previously it
+    // was recomputed by `renderWithCommonEngine`, `applyAfterRender`, and
+    // the catch-block log — three calls per cacheable miss under the
+    // common configuration.
+    const url = this.getRequestUrl(request);
+
     try {
-      const html = await this.invokeEngine(this.angularEngine, request, response);
+      const rendered = await this.invokeEngine(this.angularEngine, request, response, url);
+      const html = await this.applyAfterRender(rendered, { request, response, url });
 
       if (cacheKey !== null && html) {
         await this.cacheStorage.set(cacheKey, {
@@ -150,7 +158,7 @@ export class AngularSSRService implements OnModuleInit {
 
       return html;
     } catch (error) {
-      this.logger.error(`Error rendering: ${this.getRequestUrl(request)}`, error);
+      this.logger.error(`Error rendering: ${url}`, error);
 
       if (this.options.errorHandler) {
         this.options.errorHandler(error as Error, request, response);
@@ -165,9 +173,10 @@ export class AngularSSRService implements OnModuleInit {
     engine: AngularEngine,
     request: Request,
     response: Response,
+    url: string,
   ): Promise<string | null> {
     if (this.isCommonEngine(engine)) {
-      return await this.renderWithCommonEngine(engine, request, response);
+      return await this.renderWithCommonEngine(engine, request, response, url);
     }
     const angularRequest: Request | globalThis.Request = this.isNodeAppEngine(engine)
       ? request
@@ -179,6 +188,7 @@ export class AngularSSRService implements OnModuleInit {
     engine: CommonEngine,
     request: Request,
     response: Response,
+    url: string,
   ): Promise<string | null> {
     const documentFilePath =
       this.options.indexHtml ?? join(this.options.browserDistFolder, 'index.server.html');
@@ -202,7 +212,7 @@ export class AngularSSRService implements OnModuleInit {
       bootstrap,
       documentFilePath,
       publicPath: this.options.browserDistFolder,
-      url: this.getRequestUrl(request),
+      url,
       inlineCriticalCss: this.options.inlineCriticalCss ?? true,
       providers,
     });
@@ -222,6 +232,29 @@ export class AngularSSRService implements OnModuleInit {
       return null;
     }
     return await angularResponse.text();
+  }
+
+  /**
+   * Run the configured `afterRender` pipeline against the engine's HTML
+   * output. Each transform sees the previous transform's result; the
+   * final value is what the service caches (if cacheable) and returns.
+   *
+   * Null input (the "engine produced no response" path) short-circuits —
+   * transforms never see `null`.
+   */
+  private async applyAfterRender(
+    html: string | null,
+    context: AfterRenderContext,
+  ): Promise<string | null> {
+    const transforms = this.options.afterRender;
+    if (html === null || !transforms?.length) {
+      return html;
+    }
+    let current = html;
+    for (const transform of transforms) {
+      current = await transform(current, context);
+    }
+    return current;
   }
 
   /**

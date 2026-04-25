@@ -12,7 +12,8 @@ export {
 } from './angular-ssr.service';
 
 // Cache implementations
-export { InMemoryCacheStorage } from './cache/in-memory-cache-storage';
+export { DEFAULT_CACHE_MAX_ENTRIES, InMemoryCacheStorage } from './cache/in-memory-cache-storage';
+export { NestCacheStorage } from './cache/nest-cache-storage';
 export { UrlCacheKeyGenerator } from './cache/url-cache-key-generator';
 
 // Debug logging
@@ -20,6 +21,8 @@ export { ANGULAR_SSR_DEBUG_ENV, DebugLogger, isDebugEnabled } from './debug-logg
 
 // Interfaces
 export type {
+  AfterRenderContext,
+  AfterRenderTransform,
   AngularEngineType,
   AngularSSRModuleAsyncOptions,
   AngularSSRModuleOptions,

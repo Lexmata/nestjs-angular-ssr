@@ -311,20 +311,21 @@ NODE_ENV=production
 
 ### `forRoot()` Options
 
-| Property            | Type                               | Default                                 | Description                                                                            |
-| ------------------- | ---------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------- |
-| `browserDistFolder` | `string`                           | **required**                            | Path to the Angular browser build directory                                            |
-| `bootstrap`         | `() => Promise<AngularAppEngine>`  | **required**                            | Function that returns the Angular SSR engine                                           |
-| `serverDistFolder`  | `string?`                          | -                                       | Path to the server bundle directory                                                    |
-| `indexHtml`         | `string?`                          | `{browserDistFolder}/index.server.html` | Path to the index.html template                                                        |
-| `engineType`        | `'common' \| 'node-app' \| 'app'?` | -                                       | Explicit engine override; bypasses runtime detection (recommended for minified builds) |
-| `renderPath`        | `string \| string[]?`              | `'{/*splat}'`                           | Route path(s) to render the Angular app — see [Wildcard routes](#wildcard-routes)      |
-| `rootStaticPath`    | `string?`                          | `'{/*splat}'`                           | Path pattern for serving static files — see [Wildcard routes](#wildcard-routes)        |
-| `skipPaths`         | `(string \| RegExp)[]?`            | `['/api']`                              | Paths the SSR middleware passes through to `next()` (e.g. API prefixes)                |
-| `extraProviders`    | `StaticProvider[]?`                | -                                       | Additional providers — applied to `CommonEngine` only                                  |
-| `inlineCriticalCss` | `boolean?`                         | `true`                                  | Inline critical CSS — applied to `CommonEngine` only                                   |
-| `cache`             | `boolean \| CacheOptions?`         | `true`                                  | Cache configuration (only `GET`/`HEAD` cached)                                         |
-| `errorHandler`      | `ErrorHandler?`                    | -                                       | Custom error handler function                                                          |
+| Property            | Type                               | Default                                 | Description                                                                                                 |
+| ------------------- | ---------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `browserDistFolder` | `string`                           | **required**                            | Path to the Angular browser build directory                                                                 |
+| `bootstrap`         | `() => Promise<AngularAppEngine>`  | **required**                            | Function that returns the Angular SSR engine                                                                |
+| `serverDistFolder`  | `string?`                          | -                                       | Path to the server bundle directory                                                                         |
+| `indexHtml`         | `string?`                          | `{browserDistFolder}/index.server.html` | Path to the index.html template                                                                             |
+| `engineType`        | `'common' \| 'node-app' \| 'app'?` | -                                       | Explicit engine override; bypasses runtime detection (recommended for minified builds)                      |
+| `renderPath`        | `string \| string[]?`              | `'{/*splat}'`                           | Route path(s) to render the Angular app — see [Wildcard routes](#wildcard-routes)                           |
+| `rootStaticPath`    | `string?`                          | `'{/*splat}'`                           | Path pattern for serving static files — see [Wildcard routes](#wildcard-routes)                             |
+| `skipPaths`         | `(string \| RegExp)[]?`            | `['/api']`                              | Paths the SSR middleware passes through to `next()` (e.g. API prefixes)                                     |
+| `extraProviders`    | `StaticProvider[]?`                | -                                       | Additional providers — applied to `CommonEngine` only                                                       |
+| `inlineCriticalCss` | `boolean?`                         | `true`                                  | Inline critical CSS — applied to `CommonEngine` only                                                        |
+| `cache`             | `boolean \| CacheOptions?`         | `true`                                  | Cache configuration (only `GET`/`HEAD` cached)                                                              |
+| `errorHandler`      | `ErrorHandler?`                    | -                                       | Custom error handler function                                                                               |
+| `afterRender`       | `AfterRenderTransform[]?`          | `[]`                                    | Post-render HTML transform pipeline — see [Post-render transform pipeline](#post-render-transform-pipeline) |
 
 ### Wildcard routes
 
@@ -394,6 +395,84 @@ if (isDebugEnabled('AngularSSRService')) {
 ```
 
 The exported `DebugLogger` class can be reused in your own SSR-related code if you want a logger that obeys the same flag.
+
+## Using `@nestjs/cache-manager` as the cache backend
+
+If the host app already wires `CacheModule` from `@nestjs/cache-manager` (for Redis, memcached, multi-store setups, or just to get the metrics/tracing the default in-memory store lacks), the library ships a `NestCacheStorage` adapter that plugs the `Cache` service straight into `CacheOptions.storage`:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { Cache, CacheModule } from '@nestjs/cache-manager';
+import { AngularSSRModule, NestCacheStorage } from '@lexmata/nestjs-angular-ssr';
+
+@Module({
+  imports: [
+    CacheModule.register({ ttl: 60_000, isGlobal: true }),
+    AngularSSRModule.forRootAsync({
+      inject: [Cache],
+      useFactory: (cache: Cache) => ({
+        browserDistFolder: '...',
+        bootstrap: () => getAngularAppEngine(),
+        cache: { storage: new NestCacheStorage(cache) },
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`@nestjs/cache-manager` and `cache-manager` are declared as **optional** peer dependencies — install them only if you use `NestCacheStorage`. TTL is delegated to cache-manager (so `CacheModule.ttl` wins); the service's `cache.expiresIn` is still forwarded as the per-entry TTL so both stay in sync.
+
+## Post-render transform pipeline
+
+`options.afterRender` is an ordered list of functions that rewrite the HTML emitted by the Angular engine before it's cached or sent. Each transform sees the output of the previous one, can be sync or async, and receives an `AfterRenderContext` with the Express request, response, and full URL.
+
+Use cases: injecting a CSP nonce, adding tracking tags, minifying, rewriting asset paths, embedding request-id headers in meta tags.
+
+### Example: CSP nonce
+
+A classic use of the pipeline is stamping a per-request nonce on every `<script>` / `<style>` tag so your CSP header can enforce `script-src 'nonce-...'`. Because nonces MUST be unique per response, this example disables caching for nonce-bearing routes.
+
+```typescript
+import { randomBytes } from 'node:crypto';
+import { Module } from '@nestjs/common';
+import type { AfterRenderTransform } from '@lexmata/nestjs-angular-ssr';
+import { AngularSSRModule } from '@lexmata/nestjs-angular-ssr';
+
+const cspNonce: AfterRenderTransform = (html, { response }) => {
+  const nonce = randomBytes(16).toString('base64url');
+  response.setHeader(
+    'Content-Security-Policy',
+    `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`,
+  );
+  // Single pass, alternation over both tags. The negative lookahead skips
+  // tags that already carry a nonce (avoids duplicating the attribute if
+  // another transform stamped one earlier in the pipeline).
+  return html.replace(/<(script|style)(?![^>]*\snonce=)/g, `<$1 nonce="${nonce}"`);
+};
+
+@Module({
+  imports: [
+    AngularSSRModule.forRoot({
+      browserDistFolder: '...',
+      bootstrap: () => getAngularAppEngine(),
+      afterRender: [cspNonce],
+      cache: false, // nonces must be per-request; don't cache stale ones
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+### Ordering and caching
+
+Transforms run **before** the cache write, so cached HTML reflects the whole pipeline. That's the right default for transforms that produce stable output (minification, path rewrites, static tracking tags). For per-request output like nonces or user-specific content:
+
+- Disable caching entirely (`cache: false`), or
+- Scope the caching to routes that don't need per-request transforms via `skipPaths`, or
+- Write a placeholder into the HTML and replace it via a response header / cookie rather than inlining the value.
+
+If any transform throws, the configured `errorHandler` is invoked and no further transforms run; the response falls through to `next(error)` if no handler is set.
 
 ## Custom Cache Storage
 

@@ -446,6 +446,27 @@ describe('AngularSSRService', () => {
       expect(engine.handle).toHaveBeenCalledTimes(1);
     });
 
+    it('emits a cache-hit debug log when ANGULAR_SSR_DEBUG is enabled', async () => {
+      engine.handle.mockResolvedValue({ text: vi.fn().mockResolvedValue('<html></html>') });
+      const request = createMockRequest();
+      const response = createMockResponse();
+      await service.render(request, response);
+
+      const previous = process.env.ANGULAR_SSR_DEBUG;
+      process.env.ANGULAR_SSR_DEBUG = '1';
+      try {
+        await service.render(request, response);
+      } finally {
+        if (previous === undefined) {
+          Reflect.deleteProperty(process.env, 'ANGULAR_SSR_DEBUG');
+        } else {
+          process.env.ANGULAR_SSR_DEBUG = previous;
+        }
+      }
+
+      expect(engine.handle).toHaveBeenCalledTimes(1);
+    });
+
     it('should not cache when cache is disabled', async () => {
       const noCache = new AngularSSRService({ ...mockOptions, cache: false });
       await noCache.onModuleInit();

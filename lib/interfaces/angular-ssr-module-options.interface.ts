@@ -117,13 +117,11 @@ export interface AngularSSRModuleOptions {
   engineType?: AngularEngineType;
 
   /**
-   * Route path(s) on which the SSR middleware will run.
+   * Route path(s) on which the SSR middleware will run. Default
+   * `'{/*splat}'` is the NestJS 11 / Express 5 / path-to-regexp v8 splat
+   * pattern that matches both root `/` and every nested path.
    *
-   * Default `'*splat'` (NestJS 11 / path-to-regexp 8 wildcard). For NestJS 10
-   * with path-to-regexp 6, supply `'*'` (or any other syntax your version
-   * accepts) explicitly.
-   *
-   * @default '*splat'
+   * @default '{/*splat}'
    */
   renderPath?: string | string[];
 
@@ -133,7 +131,7 @@ export interface AngularSSRModuleOptions {
    *
    * Same wildcard caveats apply as for `renderPath`.
    *
-   * @default '*splat'
+   * @default '{/*splat}'
    */
   rootStaticPath?: string;
 

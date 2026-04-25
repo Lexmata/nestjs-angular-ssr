@@ -1,46 +1,67 @@
 import { Logger } from '@nestjs/common';
 
 /**
- * Environment variable that toggles debug-level logging across this module.
+ * Env flag controlling debug-level logging. Re-read on every call so it can
+ * be toggled at runtime without restarting the process.
  *
- * Accepted values:
- *   - unset / empty:        debug logs are silenced; warnings & errors still emit.
- *   - `1` / `true` / `yes` / `on` / `all` / `*`:  enable debug logging for every context.
- *   - comma-separated list (e.g. `module,service`):  enable debug only for the
- *     listed contexts. Matching is case-insensitive against `DebugLogger`'s
- *     declared context.
- *
- * The flag is re-read on every call so it can be toggled at runtime without
- * restarting the process — useful for production triage.
+ * Values: unset/empty disables; `1`/`true`/`yes`/`on`/`all`/`*` enables every
+ * context; comma-separated list enables only the named contexts (case-insensitive).
  */
 export const ANGULAR_SSR_DEBUG_ENV = 'ANGULAR_SSR_DEBUG';
 
 const ALL_VALUES = new Set(['1', 'true', 'yes', 'on', 'all', '*']);
 
-/**
- * Pure helper — exported so callers can branch on debug state without paying
- * the cost of building a log message.
- */
-export function isDebugEnabled(context?: string): boolean {
-  const raw = process.env[ANGULAR_SSR_DEBUG_ENV];
+interface ParsedFlag {
+  matchAll: boolean;
+  contexts: ReadonlySet<string>;
+}
+
+const EMPTY_FLAG: ParsedFlag = { matchAll: false, contexts: new Set() };
+
+let cachedRaw: string | undefined;
+let cachedFlag: ParsedFlag = EMPTY_FLAG;
+
+function parseFlag(raw: string | undefined): ParsedFlag {
   if (!raw) {
-    return false;
+    return EMPTY_FLAG;
   }
   const trimmed = raw.trim().toLowerCase();
   if (!trimmed) {
-    return false;
+    return EMPTY_FLAG;
   }
   if (ALL_VALUES.has(trimmed)) {
+    return { matchAll: true, contexts: new Set() };
+  }
+  const contexts = new Set(
+    trimmed
+      .split(',')
+      .map((segment) => segment.trim())
+      .filter(Boolean),
+  );
+  return { matchAll: false, contexts };
+}
+
+function getFlag(): ParsedFlag {
+  const raw = process.env[ANGULAR_SSR_DEBUG_ENV];
+  if (raw !== cachedRaw) {
+    cachedRaw = raw;
+    cachedFlag = parseFlag(raw);
+  }
+  return cachedFlag;
+}
+
+/**
+ * Branch on debug state without paying for log-message construction.
+ */
+export function isDebugEnabled(context?: string): boolean {
+  const flag = getFlag();
+  if (flag.matchAll) {
     return true;
   }
   if (!context) {
     return false;
   }
-  return trimmed
-    .split(',')
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-    .includes(context.toLowerCase());
+  return flag.contexts.has(context.toLowerCase());
 }
 
 /**

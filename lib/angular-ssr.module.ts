@@ -14,16 +14,10 @@ import { DebugLogger } from './debug-logger';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
 
-/**
- * Default wildcard route. Uses `(.*)` regex syntax which:
- *   - matches the root `/` and every nested path,
- *   - is accepted by both NestJS 10 (path-to-regexp 6) and NestJS 11
- *     (path-to-regexp 8 / Express 5).
- *
- * Override `renderPath` / `rootStaticPath` if you want a tighter mount point
- * (e.g. `'/{*splat}'` on NestJS 11, `'*'` on NestJS 10).
- */
-const DEFAULT_WILDCARD = '(.*)';
+// '{/*splat}' is the NestJS 11 / Express 5 / path-to-regexp v8 splat
+// syntax that matches both '/' and every nested path. Override via
+// renderPath / rootStaticPath for a tighter mount point.
+const DEFAULT_WILDCARD = '{/*splat}';
 
 @Global()
 @Module({})

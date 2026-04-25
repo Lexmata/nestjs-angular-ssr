@@ -51,16 +51,9 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    this.logger.debug(
-      `Bootstrapping Angular SSR engine (engineType=${
-        this.options.engineType ?? 'auto'
-      }, browserDistFolder=${this.options.browserDistFolder})`,
-    );
     try {
       this.angularEngine = (await this.options.bootstrap()) as AngularEngine;
-      this.logger.log(
-        `Angular SSR engine initialized (constructor=${this.angularEngine.constructor.name})`,
-      );
+      this.logger.log(`Angular SSR engine initialized (${this.angularEngine.constructor.name})`);
     } catch (error) {
       this.logger.error('Failed to initialize Angular SSR engine', error);
       throw error;
@@ -115,43 +108,34 @@ export class AngularSSRService implements OnModuleInit {
       throw new Error('Angular SSR engine not initialized');
     }
 
-    const url = this.getRequestUrl(request);
     const cacheable = this.isCacheable(request);
+    const cacheKey = cacheable ? this.cacheKeyGenerator.generateCacheKey(request) : null;
 
-    this.logger.debug(`render() ${request.method} ${url} (cacheable=${String(cacheable)})`);
-
-    if (cacheable) {
-      const cacheKey = this.cacheKeyGenerator.generateCacheKey(request);
+    if (cacheKey !== null) {
       const cached = await this.cacheStorage.get(cacheKey);
       if (cached) {
-        this.logger.debug(`Cache hit (key=${cacheKey})`);
+        if (this.logger.enabled()) {
+          this.logger.debug(`Cache hit (key=${cacheKey})`);
+        }
         return cached.content;
       }
-      this.logger.debug(`Cache miss (key=${cacheKey})`);
     }
 
     try {
-      const html = await this.invokeEngine(this.angularEngine, request, response, url);
+      const html = await this.invokeEngine(this.angularEngine, request, response);
 
-      if (cacheable && html) {
-        const cacheKey = this.cacheKeyGenerator.generateCacheKey(request);
+      if (cacheKey !== null && html) {
         await this.cacheStorage.set(cacheKey, {
           content: html,
           expiresAt: Date.now() + this.cacheExpiresIn,
         });
-        this.logger.debug(
-          `Cached response (key=${cacheKey}, ttlMs=${String(this.cacheExpiresIn)}, bytes=${String(html.length)})`,
-        );
-      } else if (html === null) {
-        this.logger.debug(`Engine returned null for ${url}`);
       }
 
       return html;
     } catch (error) {
-      this.logger.error(`Error rendering: ${url}`, error);
+      this.logger.error(`Error rendering: ${this.getRequestUrl(request)}`, error);
 
       if (this.options.errorHandler) {
-        this.logger.debug('Delegating to user-supplied errorHandler');
         this.options.errorHandler(error as Error, request, response);
         return null;
       }
@@ -164,25 +148,20 @@ export class AngularSSRService implements OnModuleInit {
     engine: AngularEngine,
     request: Request,
     response: Response,
-    url: string,
   ): Promise<string | null> {
     if (this.isCommonEngine(engine)) {
-      this.logger.debug('Routing to CommonEngine.render()');
-      return await this.renderWithCommonEngine(engine, request, response, url);
+      return await this.renderWithCommonEngine(engine, request, response);
     }
-    if (this.isNodeAppEngine(engine)) {
-      this.logger.debug('Routing to AngularNodeAppEngine.handle()');
-      return await this.renderWithNodeAppEngine(engine, request, response);
-    }
-    this.logger.debug('Routing to AngularAppEngine.handle()');
-    return await this.renderWithAppEngine(engine, request, response);
+    const angularRequest: Request | globalThis.Request = this.isNodeAppEngine(engine)
+      ? request
+      : this.createWebRequest(request);
+    return await this.handleAngularEngine(engine, angularRequest, response);
   }
 
   private async renderWithCommonEngine(
     engine: CommonEngine,
     request: Request,
     response: Response,
-    url: string,
   ): Promise<string | null> {
     const documentFilePath =
       this.options.indexHtml ?? join(this.options.browserDistFolder, 'index.server.html');
@@ -201,48 +180,28 @@ export class AngularSSRService implements OnModuleInit {
       bootstrap,
       documentFilePath,
       publicPath: this.options.browserDistFolder,
-      url,
+      url: this.getRequestUrl(request),
       inlineCriticalCss: this.options.inlineCriticalCss ?? true,
-      // CommonEngine's StaticProvider type comes from @angular/core; ours is
-      // a structurally-compatible mirror so consumers don't need an Angular
-      // import in their NestJS module.
+      // Our StaticProvider mirrors @angular/core's structurally so the NestJS
+      // module doesn't pull in an Angular runtime import.
       providers: providers as never,
     });
   }
 
-  private async renderWithNodeAppEngine(
-    engine: AngularNodeAppEngine,
-    request: Request,
+  private async handleAngularEngine(
+    engine: AngularNodeAppEngine | AngularAppEngine,
+    request: Request | globalThis.Request,
     response: Response,
   ): Promise<string | null> {
-    // engine.handle accepts (req, requestContext?). Express's Request extends
-    // Node's IncomingMessage, which is what AngularNodeAppEngine expects.
     const handle = engine.handle.bind(engine) as (
-      r: Request,
+      r: Request | globalThis.Request,
       ctx?: Record<string, unknown>,
-    ) => Promise<Response | null | undefined> | null;
+    ) => Promise<{ text: () => Promise<string> } | null | undefined> | null;
     const angularResponse = await handle(request, { response });
     if (!angularResponse) {
       return null;
     }
-    return await (angularResponse as unknown as { text: () => Promise<string> }).text();
-  }
-
-  private async renderWithAppEngine(
-    engine: AngularAppEngine,
-    request: Request,
-    response: Response,
-  ): Promise<string | null> {
-    const angularRequest = this.createAngularRequest(request);
-    const handle = engine.handle.bind(engine) as (
-      r: globalThis.Request,
-      ctx?: Record<string, unknown>,
-    ) => Promise<Response | null | undefined> | null;
-    const angularResponse = await handle(angularRequest, { response });
-    if (!angularResponse) {
-      return null;
-    }
-    return await (angularResponse as unknown as { text: () => Promise<string> }).text();
+    return await angularResponse.text();
   }
 
   /**
@@ -263,11 +222,15 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   /**
-   * Create a native Request object compatible with Angular SSR
+   * Build a Web `Request` from the Express request for AngularAppEngine.
+   *
+   * We hand-roll this rather than reusing `createWebRequestFromNodeRequest`
+   * from `@angular/ssr/node` because that helper pulls in
+   * `@angular/platform-server` transitively, which downstream consumers (and
+   * our own tests) shouldn't have to install just to render with the
+   * lighter-weight engine variants.
    */
-  private createAngularRequest(expressRequest: Request): globalThis.Request {
-    const url = this.getRequestUrl(expressRequest);
-
+  private createWebRequest(expressRequest: Request): globalThis.Request {
     const headers = new Headers();
     for (const [key, value] of Object.entries(expressRequest.headers)) {
       if (!value) {
@@ -281,8 +244,7 @@ export class AngularSSRService implements OnModuleInit {
         headers.set(key, value);
       }
     }
-
-    return new Request(url, {
+    return new Request(this.getRequestUrl(expressRequest), {
       method: expressRequest.method,
       headers,
     });

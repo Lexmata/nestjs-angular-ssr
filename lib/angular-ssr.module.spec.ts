@@ -182,17 +182,17 @@ describe('AngularSSRModule', () => {
       expect(mockConsumer.apply).toHaveBeenCalled();
     });
 
-    it('uses (.*) as the default render path', () => {
+    it('uses the splat wildcard as the default render path', () => {
       const module = new AngularSSRModule(mockOptions);
       module.configure(mockConsumer);
-      expect(applyResult.forRoutes).toHaveBeenCalledWith('(.*)');
+      expect(applyResult.forRoutes).toHaveBeenCalledWith('{/*splat}');
     });
 
-    it('uses (.*) for both static and SSR routes by default', () => {
+    it('uses the splat wildcard for both static and SSR routes by default', () => {
       const module = new AngularSSRModule(mockOptions);
       module.configure(mockConsumer);
-      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(1, '(.*)');
-      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(2, '(.*)');
+      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(1, '{/*splat}');
+      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(2, '{/*splat}');
     });
 
     it('honours a custom render path string', () => {

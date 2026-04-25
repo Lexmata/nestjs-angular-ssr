@@ -133,6 +133,26 @@ describe('AngularSSRMiddleware', () => {
 
         expect(mockSSRService.render).toHaveBeenCalled();
       });
+
+      it('emits a bypass debug log when ANGULAR_SSR_DEBUG is enabled', async () => {
+        const request = createMockRequest({ originalUrl: '/api/anything' });
+        const response = createMockResponse();
+
+        const previous = process.env.ANGULAR_SSR_DEBUG;
+        process.env.ANGULAR_SSR_DEBUG = '1';
+        try {
+          await middleware.use(request, response, mockNext);
+        } finally {
+          if (previous === undefined) {
+            Reflect.deleteProperty(process.env, 'ANGULAR_SSR_DEBUG');
+          } else {
+            process.env.ANGULAR_SSR_DEBUG = previous;
+          }
+        }
+
+        expect(mockNext).toHaveBeenCalled();
+        expect(mockSSRService.render).not.toHaveBeenCalled();
+      });
     });
 
     describe('static file requests', () => {

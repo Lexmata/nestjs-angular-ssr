@@ -45,7 +45,7 @@ yarn add @lexmata/nestjs-angular-ssr
 ## Prerequisites
 
 - Node.js >= 20.0.0
-- NestJS >= 10.0.0 (NestJS 11 supported — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5) below)
+- NestJS >= 11.0.0 (Express 5 / path-to-regexp v8)
 - Angular >= 19.0.0 with SSR configured
 
 ## Usage
@@ -311,24 +311,24 @@ NODE_ENV=production
 
 ### `forRoot()` Options
 
-| Property            | Type                               | Default                                 | Description                                                                                            |
-| ------------------- | ---------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `browserDistFolder` | `string`                           | **required**                            | Path to the Angular browser build directory                                                            |
-| `bootstrap`         | `() => Promise<AngularAppEngine>`  | **required**                            | Function that returns the Angular SSR engine                                                           |
-| `serverDistFolder`  | `string?`                          | -                                       | Path to the server bundle directory                                                                    |
-| `indexHtml`         | `string?`                          | `{browserDistFolder}/index.server.html` | Path to the index.html template                                                                        |
-| `engineType`        | `'common' \| 'node-app' \| 'app'?` | -                                       | Explicit engine override; bypasses runtime detection (recommended for minified builds)                 |
-| `renderPath`        | `string \| string[]?`              | `'(.*)'`                                | Route path(s) to render the Angular app — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5) |
-| `rootStaticPath`    | `string?`                          | `'(.*)'`                                | Path pattern for serving static files — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5)   |
-| `skipPaths`         | `(string \| RegExp)[]?`            | `['/api']`                              | Paths the SSR middleware passes through to `next()` (e.g. API prefixes)                                |
-| `extraProviders`    | `StaticProvider[]?`                | -                                       | Additional providers — applied to `CommonEngine` only                                                  |
-| `inlineCriticalCss` | `boolean?`                         | `true`                                  | Inline critical CSS — applied to `CommonEngine` only                                                   |
-| `cache`             | `boolean \| CacheOptions?`         | `true`                                  | Cache configuration (only `GET`/`HEAD` cached)                                                         |
-| `errorHandler`      | `ErrorHandler?`                    | -                                       | Custom error handler function                                                                          |
+| Property            | Type                               | Default                                 | Description                                                                            |
+| ------------------- | ---------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `browserDistFolder` | `string`                           | **required**                            | Path to the Angular browser build directory                                            |
+| `bootstrap`         | `() => Promise<AngularAppEngine>`  | **required**                            | Function that returns the Angular SSR engine                                           |
+| `serverDistFolder`  | `string?`                          | -                                       | Path to the server bundle directory                                                    |
+| `indexHtml`         | `string?`                          | `{browserDistFolder}/index.server.html` | Path to the index.html template                                                        |
+| `engineType`        | `'common' \| 'node-app' \| 'app'?` | -                                       | Explicit engine override; bypasses runtime detection (recommended for minified builds) |
+| `renderPath`        | `string \| string[]?`              | `'{/*splat}'`                           | Route path(s) to render the Angular app — see [Wildcard routes](#wildcard-routes)      |
+| `rootStaticPath`    | `string?`                          | `'{/*splat}'`                           | Path pattern for serving static files — see [Wildcard routes](#wildcard-routes)        |
+| `skipPaths`         | `(string \| RegExp)[]?`            | `['/api']`                              | Paths the SSR middleware passes through to `next()` (e.g. API prefixes)                |
+| `extraProviders`    | `StaticProvider[]?`                | -                                       | Additional providers — applied to `CommonEngine` only                                  |
+| `inlineCriticalCss` | `boolean?`                         | `true`                                  | Inline critical CSS — applied to `CommonEngine` only                                   |
+| `cache`             | `boolean \| CacheOptions?`         | `true`                                  | Cache configuration (only `GET`/`HEAD` cached)                                         |
+| `errorHandler`      | `ErrorHandler?`                    | -                                       | Custom error handler function                                                          |
 
-### Wildcard routes (NestJS 11 / Express 5)
+### Wildcard routes
 
-The defaults use `(.*)`, which is accepted by both `path-to-regexp` v6 (NestJS 10) and v8 (NestJS 11 / Express 5). Bare `'*'` works only on NestJS 10 — under NestJS 11 it throws `Missing parameter name`. If you want the v11-native syntax, override with `'/{*splat}'`.
+The defaults use NestJS 11 / Express 5 / path-to-regexp v8 splat syntax: `'{/*splat}'`. The braces make the splat optional so the pattern matches both root `/` and every nested path. If you only need to mount under a sub-path, override with something like `'/app/*splat'`.
 
 ### Cache Options
 

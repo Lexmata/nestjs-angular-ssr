@@ -2,14 +2,9 @@ import type { CacheKeyGenerator } from '../interfaces';
 import type { Request } from 'express';
 
 /**
- * Default cache key generator: combines HTTP method, hostname, and the full
- * request URL.
- *
- * - Method is included so `GET /foo` and `POST /foo` cannot collide.
- * - Hostname is lower-cased per RFC 3986 (host component is case-insensitive).
- * - Path and query string are preserved as-is — paths are case-sensitive per
- *   RFC 3986 and lower-casing them would collapse `/Users/Alice` and
- *   `/users/alice` into the same cache slot.
+ * Default cache key: `<METHOD> <host>/<path?query>`. Method is included to
+ * stop verb collisions; host is lower-cased (RFC 3986); path stays
+ * case-sensitive.
  */
 export class UrlCacheKeyGenerator implements CacheKeyGenerator {
   generateCacheKey(request: Request): string {

@@ -46,39 +46,34 @@ export class AngularSSRMiddleware implements NestMiddleware {
     const url = req.originalUrl || req.url;
     const bypass = this.bypassReason(req, res, url);
     if (bypass) {
-      this.logger.debug(`bypass ${req.method} ${url}: ${bypass}`);
+      if (this.logger.enabled()) {
+        this.logger.debug(`bypass ${req.method} ${url}: ${bypass}`);
+      }
       next();
       return;
     }
 
-    this.logger.debug(`render ${req.method} ${url}`);
-
     try {
       const html = await this.ssrService.render(req, res);
 
-      // The configured errorHandler may have written a response from inside
-      // service.render(); never double-respond.
-      if (this.responseAlreadySent(res)) {
-        this.logger.debug(`response already sent by service for ${url}`);
+      if (res.headersSent) {
         return;
       }
 
       if (html === null) {
-        this.logger.debug(`null render result for ${url}, deferring to next()`);
         next();
         return;
       }
 
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.send(html);
-      this.logger.debug(`sent ${String(html.length)} bytes for ${url}`);
     } catch (error) {
       this.handleRenderError(error as Error, req, res, next);
     }
   }
 
   private bypassReason(req: Request, res: Response, url: string): string | null {
-    if (this.responseAlreadySent(res)) {
+    if (res.headersSent) {
       return 'response headers already sent';
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -93,22 +88,13 @@ export class AngularSSRMiddleware implements NestMiddleware {
     return null;
   }
 
-  /**
-   * Read `res.headersSent` through a structural cast so the linter doesn't
-   * narrow it to a constant after the first early-return check — the value
-   * mutates whenever the user errorHandler writes to the response.
-   */
-  private responseAlreadySent(res: Response): boolean {
-    return (res as { headersSent: boolean }).headersSent;
-  }
-
   private handleRenderError(error: Error, req: Request, res: Response, next: NextFunction): void {
     this.logger.error('SSR rendering error', error);
 
-    // Errors thrown before the service's inner try/catch (e.g. engine not
-    // initialized) bypass the user's errorHandler. Invoke it here as a
-    // safety net so the request never silently hangs.
-    if (this.options.errorHandler && !this.responseAlreadySent(res)) {
+    // Service throws bypass the user's errorHandler when raised before its
+    // inner try/catch (e.g. engine not yet initialised) — re-invoke here so
+    // the request never silently hangs.
+    if (this.options.errorHandler && !res.headersSent) {
       try {
         this.options.errorHandler(error, req, res);
       } catch (handlerError) {
@@ -116,7 +102,7 @@ export class AngularSSRMiddleware implements NestMiddleware {
       }
     }
 
-    if (!this.responseAlreadySent(res)) {
+    if (!res.headersSent) {
       next(error);
     }
   }

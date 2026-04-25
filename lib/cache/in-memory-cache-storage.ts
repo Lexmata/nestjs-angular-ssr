@@ -1,3 +1,4 @@
+import { isExpired } from './expiry';
 import type { CacheEntry, CacheStorage } from '../interfaces';
 
 /**
@@ -32,7 +33,7 @@ export class InMemoryCacheStorage implements CacheStorage {
     if (!entry) {
       return undefined;
     }
-    if (Date.now() > entry.expiresAt) {
+    if (isExpired(entry)) {
       this.cache.delete(key);
       return undefined;
     }
@@ -50,16 +51,27 @@ export class InMemoryCacheStorage implements CacheStorage {
     this.evictIfOverCapacity();
   }
 
+  /**
+   * @returns always `true` — matches `cache-manager` / Redis semantics
+   * where a missing key is not an error.
+   */
   delete(key: string): boolean {
-    return this.cache.delete(key);
+    this.cache.delete(key);
+    return true;
   }
 
   clear(): void {
     this.cache.clear();
   }
 
+  /**
+   * Read-only existence check. Does NOT evict stale entries — pairs with
+   * `CacheStorage.has()`'s contract, so callers using it as a predicate
+   * don't trigger unexpected writes.
+   */
   has(key: string): boolean {
-    return this.get(key) !== undefined;
+    const entry = this.cache.get(key);
+    return entry !== undefined && !isExpired(entry);
   }
 
   /**
@@ -75,7 +87,7 @@ export class InMemoryCacheStorage implements CacheStorage {
   prune(): void {
     const now = Date.now();
     for (const [key, entry] of this.cache.entries()) {
-      if (now > entry.expiresAt) {
+      if (isExpired(entry, now)) {
         this.cache.delete(key);
       }
     }

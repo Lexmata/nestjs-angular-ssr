@@ -395,6 +395,33 @@ if (isDebugEnabled('AngularSSRService')) {
 
 The exported `DebugLogger` class can be reused in your own SSR-related code if you want a logger that obeys the same flag.
 
+## Using `@nestjs/cache-manager` as the cache backend
+
+If the host app already wires `CacheModule` from `@nestjs/cache-manager` (for Redis, memcached, multi-store setups, or just to get the metrics/tracing the default in-memory store lacks), the library ships a `NestCacheStorage` adapter that plugs the `Cache` service straight into `CacheOptions.storage`:
+
+```typescript
+import { Module } from '@nestjs/common';
+import { Cache, CacheModule } from '@nestjs/cache-manager';
+import { AngularSSRModule, NestCacheStorage } from '@lexmata/nestjs-angular-ssr';
+
+@Module({
+  imports: [
+    CacheModule.register({ ttl: 60_000, isGlobal: true }),
+    AngularSSRModule.forRootAsync({
+      inject: [Cache],
+      useFactory: (cache: Cache) => ({
+        browserDistFolder: '...',
+        bootstrap: () => getAngularAppEngine(),
+        cache: { storage: new NestCacheStorage(cache) },
+      }),
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+`@nestjs/cache-manager` and `cache-manager` are declared as **optional** peer dependencies — install them only if you use `NestCacheStorage`. TTL is delegated to cache-manager (so `CacheModule.ttl` wins); the service's `cache.expiresIn` is still forwarded as the per-entry TTL so both stay in sync.
+
 ## Custom Cache Storage
 
 Implement the `CacheStorage` interface for custom caching solutions (e.g., Redis):

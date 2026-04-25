@@ -10,12 +10,18 @@ export { AngularSSRService, DEFAULT_CACHE_EXPIRATION_TIME } from './angular-ssr.
 // Cache implementations
 export { InMemoryCacheStorage } from './cache/in-memory-cache-storage';
 export { UrlCacheKeyGenerator } from './cache/url-cache-key-generator';
+
+// Debug logging
+export { ANGULAR_SSR_DEBUG_ENV, DebugLogger, isDebugEnabled } from './debug-logger';
+
 // Interfaces
 export type {
+  AngularEngineType,
   AngularSSRModuleAsyncOptions,
   AngularSSRModuleOptions,
   CacheOptions,
   ErrorHandler,
+  SkipPath,
   StaticProvider,
 } from './interfaces/angular-ssr-module-options.interface';
 

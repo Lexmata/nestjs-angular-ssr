@@ -1,13 +1,15 @@
 import { join } from 'node:path';
-import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { InMemoryCacheStorage } from './cache/in-memory-cache-storage';
 import { UrlCacheKeyGenerator } from './cache/url-cache-key-generator';
-import { ANGULAR_SSR_OPTIONS } from './tokens';
+import { DebugLogger } from './debug-logger';
+import { ANGULAR_SSR_OPTIONS, REQUEST, RESPONSE } from './tokens';
 import type {
   AngularSSRModuleOptions,
   CacheKeyGenerator,
   CacheOptions,
   CacheStorage,
+  StaticProvider,
 } from './interfaces';
 import type { AngularAppEngine } from '@angular/ssr';
 import type { AngularNodeAppEngine, CommonEngine } from '@angular/ssr/node';
@@ -22,7 +24,7 @@ type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
 
 @Injectable()
 export class AngularSSRService implements OnModuleInit {
-  private readonly logger = new Logger(AngularSSRService.name);
+  private readonly logger = new DebugLogger(AngularSSRService.name);
   private angularEngine: AngularEngine | null = null;
 
   private readonly cacheEnabled: boolean;
@@ -34,7 +36,6 @@ export class AngularSSRService implements OnModuleInit {
     @Inject(ANGULAR_SSR_OPTIONS)
     private readonly options: AngularSSRModuleOptions,
   ) {
-    // Initialize cache settings
     const cacheOptions = this.resolveCacheOptions(options.cache);
     this.cacheEnabled = cacheOptions !== false;
 
@@ -43,7 +44,6 @@ export class AngularSSRService implements OnModuleInit {
       this.cacheKeyGenerator = cacheOptions.keyGenerator ?? new UrlCacheKeyGenerator();
       this.cacheExpiresIn = cacheOptions.expiresIn ?? DEFAULT_CACHE_EXPIRATION_TIME;
     } else {
-      // Initialize with defaults even if disabled (for type safety)
       this.cacheStorage = new InMemoryCacheStorage();
       this.cacheKeyGenerator = new UrlCacheKeyGenerator();
       this.cacheExpiresIn = DEFAULT_CACHE_EXPIRATION_TIME;
@@ -51,9 +51,16 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    this.logger.debug(
+      `Bootstrapping Angular SSR engine (engineType=${
+        this.options.engineType ?? 'auto'
+      }, browserDistFolder=${this.options.browserDistFolder})`,
+    );
     try {
       this.angularEngine = (await this.options.bootstrap()) as AngularEngine;
-      this.logger.log('Angular SSR engine initialized successfully');
+      this.logger.log(
+        `Angular SSR engine initialized (constructor=${this.angularEngine.constructor.name})`,
+      );
     } catch (error) {
       this.logger.error('Failed to initialize Angular SSR engine', error);
       throw error;
@@ -74,86 +81,69 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   /**
-   * Check if the engine is a CommonEngine
+   * Detect the engine variant via duck-typing, with `options.engineType` as
+   * an explicit override for minified production builds where class names
+   * are unreliable.
    */
   private isCommonEngine(engine: AngularEngine): engine is CommonEngine {
-    return engine.constructor.name === 'CommonEngine' || 'render' in engine;
+    if (this.options.engineType === 'common') {
+      return true;
+    }
+    if (this.options.engineType !== undefined) {
+      return false;
+    }
+    const candidate = engine as unknown as { render?: unknown; handle?: unknown };
+    return typeof candidate.render === 'function' && typeof candidate.handle !== 'function';
   }
 
-  /**
-   * Check if the engine is an AngularNodeAppEngine
-   */
   private isNodeAppEngine(engine: AngularEngine): engine is AngularNodeAppEngine {
+    if (this.options.engineType === 'node-app') {
+      return true;
+    }
+    if (this.options.engineType !== undefined) {
+      return false;
+    }
     return engine.constructor.name === 'AngularNodeAppEngine';
   }
 
   /**
-   * Render the Angular application for the given request
+   * Render the Angular application for the given request.
    */
-  // eslint-disable-next-line sonarjs/cognitive-complexity -- engine branches (Common / Node / Fetch)
+
   async render(request: Request, response: Response): Promise<string | null> {
     if (!this.angularEngine) {
       throw new Error('Angular SSR engine not initialized');
     }
 
     const url = this.getRequestUrl(request);
+    const cacheable = this.isCacheable(request);
 
-    // Check cache first
-    if (this.cacheEnabled) {
+    this.logger.debug(`render() ${request.method} ${url} (cacheable=${String(cacheable)})`);
+
+    if (cacheable) {
       const cacheKey = this.cacheKeyGenerator.generateCacheKey(request);
       const cached = await this.cacheStorage.get(cacheKey);
-
       if (cached) {
-        this.logger.debug(`Cache hit for: ${url}`);
+        this.logger.debug(`Cache hit (key=${cacheKey})`);
         return cached.content;
       }
+      this.logger.debug(`Cache miss (key=${cacheKey})`);
     }
 
     try {
-      let html: string | null = null;
+      const html = await this.invokeEngine(this.angularEngine, request, response, url);
 
-      if (this.isCommonEngine(this.angularEngine)) {
-        // For CommonEngine, use the render method
-        const documentFilePath =
-          this.options.indexHtml ?? join(this.options.browserDistFolder, 'index.server.html');
-
-        // Get the actual bootstrap function (angularBootstrap returns a Promise that resolves to it)
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- user-provided bootstrap
-        const bootstrap = this.options.angularBootstrap
-          ? await this.options.angularBootstrap()
-          : undefined;
-
-        /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment -- Angular CommonEngine.render API */
-        html = await this.angularEngine.render({
-          bootstrap,
-          documentFilePath,
-          url,
-          providers: this.options.extraProviders as any,
-        });
-        /* eslint-enable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
-      } else if (this.isNodeAppEngine(this.angularEngine)) {
-        // For AngularNodeAppEngine, pass the Express request directly
-        const angularResponse = await this.angularEngine.handle(request);
-        if (angularResponse) {
-          html = await angularResponse.text();
-        }
-      } else {
-        // For AngularAppEngine, create a fetch API Request
-        const angularRequest = this.createAngularRequest(request);
-        const angularResponse = await this.angularEngine.handle(angularRequest);
-        if (angularResponse) {
-          html = await angularResponse.text();
-        }
-      }
-
-      // Store in cache
-      if (this.cacheEnabled && html) {
+      if (cacheable && html) {
         const cacheKey = this.cacheKeyGenerator.generateCacheKey(request);
         await this.cacheStorage.set(cacheKey, {
           content: html,
           expiresAt: Date.now() + this.cacheExpiresIn,
         });
-        this.logger.debug(`Cached response for: ${url}`);
+        this.logger.debug(
+          `Cached response (key=${cacheKey}, ttlMs=${String(this.cacheExpiresIn)}, bytes=${String(html.length)})`,
+        );
+      } else if (html === null) {
+        this.logger.debug(`Engine returned null for ${url}`);
       }
 
       return html;
@@ -161,12 +151,105 @@ export class AngularSSRService implements OnModuleInit {
       this.logger.error(`Error rendering: ${url}`, error);
 
       if (this.options.errorHandler) {
+        this.logger.debug('Delegating to user-supplied errorHandler');
         this.options.errorHandler(error as Error, request, response);
         return null;
       }
 
       throw error;
     }
+  }
+
+  private async invokeEngine(
+    engine: AngularEngine,
+    request: Request,
+    response: Response,
+    url: string,
+  ): Promise<string | null> {
+    if (this.isCommonEngine(engine)) {
+      this.logger.debug('Routing to CommonEngine.render()');
+      return await this.renderWithCommonEngine(engine, request, response, url);
+    }
+    if (this.isNodeAppEngine(engine)) {
+      this.logger.debug('Routing to AngularNodeAppEngine.handle()');
+      return await this.renderWithNodeAppEngine(engine, request, response);
+    }
+    this.logger.debug('Routing to AngularAppEngine.handle()');
+    return await this.renderWithAppEngine(engine, request, response);
+  }
+
+  private async renderWithCommonEngine(
+    engine: CommonEngine,
+    request: Request,
+    response: Response,
+    url: string,
+  ): Promise<string | null> {
+    const documentFilePath =
+      this.options.indexHtml ?? join(this.options.browserDistFolder, 'index.server.html');
+
+    const bootstrap = (
+      this.options.angularBootstrap ? await this.options.angularBootstrap() : undefined
+    ) as Parameters<CommonEngine['render']>[0]['bootstrap'];
+
+    const providers: StaticProvider[] = [
+      ...(this.options.extraProviders ?? []),
+      { provide: REQUEST, useValue: request },
+      { provide: RESPONSE, useValue: response },
+    ];
+
+    return await engine.render({
+      bootstrap,
+      documentFilePath,
+      publicPath: this.options.browserDistFolder,
+      url,
+      inlineCriticalCss: this.options.inlineCriticalCss ?? true,
+      // CommonEngine's StaticProvider type comes from @angular/core; ours is
+      // a structurally-compatible mirror so consumers don't need an Angular
+      // import in their NestJS module.
+      providers: providers as never,
+    });
+  }
+
+  private async renderWithNodeAppEngine(
+    engine: AngularNodeAppEngine,
+    request: Request,
+    response: Response,
+  ): Promise<string | null> {
+    // engine.handle accepts (req, requestContext?). Express's Request extends
+    // Node's IncomingMessage, which is what AngularNodeAppEngine expects.
+    const handle = engine.handle.bind(engine) as (
+      r: Request,
+      ctx?: Record<string, unknown>,
+    ) => Promise<Response | null | undefined> | null;
+    const angularResponse = await handle(request, { response });
+    if (!angularResponse) {
+      return null;
+    }
+    return await (angularResponse as unknown as { text: () => Promise<string> }).text();
+  }
+
+  private async renderWithAppEngine(
+    engine: AngularAppEngine,
+    request: Request,
+    response: Response,
+  ): Promise<string | null> {
+    const angularRequest = this.createAngularRequest(request);
+    const handle = engine.handle.bind(engine) as (
+      r: globalThis.Request,
+      ctx?: Record<string, unknown>,
+    ) => Promise<Response | null | undefined> | null;
+    const angularResponse = await handle(angularRequest, { response });
+    if (!angularResponse) {
+      return null;
+    }
+    return await (angularResponse as unknown as { text: () => Promise<string> }).text();
+  }
+
+  /**
+   * Only GET and HEAD requests are cacheable.
+   */
+  private isCacheable(request: Request): boolean {
+    return this.cacheEnabled && (request.method === 'GET' || request.method === 'HEAD');
   }
 
   /**
@@ -185,17 +268,17 @@ export class AngularSSRService implements OnModuleInit {
   private createAngularRequest(expressRequest: Request): globalThis.Request {
     const url = this.getRequestUrl(expressRequest);
 
-    // Convert Express headers to Headers object
     const headers = new Headers();
     for (const [key, value] of Object.entries(expressRequest.headers)) {
-      if (value) {
-        if (Array.isArray(value)) {
-          for (const v of value) {
-            headers.append(key, v);
-          }
-        } else {
-          headers.set(key, value);
+      if (!value) {
+        continue;
+      }
+      if (Array.isArray(value)) {
+        for (const v of value) {
+          headers.append(key, v);
         }
+      } else {
+        headers.set(key, value);
       }
     }
 

@@ -44,8 +44,8 @@ yarn add @lexmata/nestjs-angular-ssr
 
 ## Prerequisites
 
-- Node.js >= 18.0.0
-- NestJS >= 10.0.0
+- Node.js >= 20.0.0
+- NestJS >= 10.0.0 (NestJS 11 supported — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5) below)
 - Angular >= 19.0.0 with SSR configured
 
 ## Usage
@@ -311,18 +311,24 @@ NODE_ENV=production
 
 ### `forRoot()` Options
 
-| Property            | Type                              | Default                                 | Description                                   |
-| ------------------- | --------------------------------- | --------------------------------------- | --------------------------------------------- |
-| `browserDistFolder` | `string`                          | **required**                            | Path to the Angular browser build directory   |
-| `bootstrap`         | `() => Promise<AngularAppEngine>` | **required**                            | Function that returns the Angular SSR engine  |
-| `serverDistFolder`  | `string?`                         | -                                       | Path to the server bundle directory           |
-| `indexHtml`         | `string?`                         | `{browserDistFolder}/index.server.html` | Path to the index.html template               |
-| `renderPath`        | `string \| string[]?`             | `'*'`                                   | Route path(s) to render the Angular app       |
-| `rootStaticPath`    | `string \| RegExp?`               | `'*'`                                   | Path pattern for serving static files         |
-| `extraProviders`    | `StaticProvider[]?`               | -                                       | Additional providers for SSR                  |
-| `inlineCriticalCss` | `boolean?`                        | `true`                                  | Inline critical CSS to reduce render-blocking |
-| `cache`             | `boolean \| CacheOptions?`        | `true`                                  | Cache configuration                           |
-| `errorHandler`      | `ErrorHandler?`                   | -                                       | Custom error handler function                 |
+| Property            | Type                               | Default                                 | Description                                                                                            |
+| ------------------- | ---------------------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `browserDistFolder` | `string`                           | **required**                            | Path to the Angular browser build directory                                                            |
+| `bootstrap`         | `() => Promise<AngularAppEngine>`  | **required**                            | Function that returns the Angular SSR engine                                                           |
+| `serverDistFolder`  | `string?`                          | -                                       | Path to the server bundle directory                                                                    |
+| `indexHtml`         | `string?`                          | `{browserDistFolder}/index.server.html` | Path to the index.html template                                                                        |
+| `engineType`        | `'common' \| 'node-app' \| 'app'?` | -                                       | Explicit engine override; bypasses runtime detection (recommended for minified builds)                 |
+| `renderPath`        | `string \| string[]?`              | `'(.*)'`                                | Route path(s) to render the Angular app — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5) |
+| `rootStaticPath`    | `string?`                          | `'(.*)'`                                | Path pattern for serving static files — see [Wildcard routes](#wildcard-routes-nestjs-11--express-5)   |
+| `skipPaths`         | `(string \| RegExp)[]?`            | `['/api']`                              | Paths the SSR middleware passes through to `next()` (e.g. API prefixes)                                |
+| `extraProviders`    | `StaticProvider[]?`                | -                                       | Additional providers — applied to `CommonEngine` only                                                  |
+| `inlineCriticalCss` | `boolean?`                         | `true`                                  | Inline critical CSS — applied to `CommonEngine` only                                                   |
+| `cache`             | `boolean \| CacheOptions?`         | `true`                                  | Cache configuration (only `GET`/`HEAD` cached)                                                         |
+| `errorHandler`      | `ErrorHandler?`                    | -                                       | Custom error handler function                                                                          |
+
+### Wildcard routes (NestJS 11 / Express 5)
+
+The defaults use `(.*)`, which is accepted by both `path-to-regexp` v6 (NestJS 10) and v8 (NestJS 11 / Express 5). Bare `'*'` works only on NestJS 10 — under NestJS 11 it throws `Missing parameter name`. If you want the v11-native syntax, override with `'/{*splat}'`.
 
 ### Cache Options
 
@@ -334,7 +340,11 @@ NODE_ENV=production
 
 ## Request and Response Injection
 
-Access Express `Request` and `Response` objects in your Angular components using the provided string tokens:
+How you access the Express request/response in your Angular components depends on which engine your Angular SSR setup is using.
+
+### CommonEngine
+
+This module registers the Express `Request` and `Response` as per-render Angular providers under the `REQUEST` and `RESPONSE` string tokens:
 
 ```typescript
 import { Component, Inject, Optional, PLATFORM_ID } from '@angular/core';
@@ -358,7 +368,46 @@ export class NotFoundComponent {
 }
 ```
 
-> **Note**: `REQUEST` and `RESPONSE` are string tokens (`'ANGULAR_SSR_REQUEST'` and `'ANGULAR_SSR_RESPONSE'`) that work with both NestJS and Angular dependency injection systems.
+> **Note**: `REQUEST` and `RESPONSE` are string tokens (`'ANGULAR_SSR_REQUEST'` and `'ANGULAR_SSR_RESPONSE'`).
+
+### AngularNodeAppEngine / AngularAppEngine
+
+The newer engines provide their own `REQUEST` and `REQUEST_CONTEXT` injection tokens via `@angular/ssr` — use those directly. This module forwards `{ response }` as the `requestContext` so you can also retrieve the Express response there:
+
+```typescript
+import { inject } from '@angular/core';
+import { REQUEST_CONTEXT } from '@angular/ssr';
+import type { Response } from 'express';
+
+const ctx = inject<{ response?: Response }>(REQUEST_CONTEXT);
+ctx.response?.status(404);
+```
+
+## Debug Logging
+
+Set the `ANGULAR_SSR_DEBUG` environment variable to enable verbose tracing across the module, service, and middleware. Warnings and errors are always emitted; only `log` / `debug` / `verbose` levels are gated.
+
+```bash
+# Enable everything
+ANGULAR_SSR_DEBUG=1 node dist/main.js
+
+# Enable only specific contexts (case-insensitive, comma-separated)
+ANGULAR_SSR_DEBUG=AngularSSRMiddleware,AngularSSRService node dist/main.js
+```
+
+Accepted "enable all" values: `1`, `true`, `yes`, `on`, `all`, `*`. The flag is re-read on every log call, so you can toggle it at runtime by mutating `process.env` from a maintenance endpoint or a debug tool — no restart required.
+
+You can also branch on the flag yourself when constructing an expensive log message:
+
+```typescript
+import { isDebugEnabled } from '@lexmata/nestjs-angular-ssr';
+
+if (isDebugEnabled('AngularSSRService')) {
+  // build a heavy debug payload
+}
+```
+
+The exported `DebugLogger` class can be reused in your own SSR-related code if you want a logger that obeys the same flag.
 
 ## Custom Cache Storage
 
@@ -505,11 +554,11 @@ pnpm publish --access public
 
 ## Related Repos
 
-| Repo | Relationship |
-|---|---|
-| `lexmata-app-frontend` | Consumer -- uses this module for Angular SSR in the main app |
-| `lexmata-marketing` | Consumer -- uses this module for the marketing site SSR |
-| `lexmata-admin-frontend` | Consumer -- uses this module for the admin panel SSR |
+| Repo                     | Relationship                                                 |
+| ------------------------ | ------------------------------------------------------------ |
+| `lexmata-app-frontend`   | Consumer -- uses this module for Angular SSR in the main app |
+| `lexmata-marketing`      | Consumer -- uses this module for the marketing site SSR      |
+| `lexmata-admin-frontend` | Consumer -- uses this module for the admin panel SSR         |
 
 ## Contributing
 

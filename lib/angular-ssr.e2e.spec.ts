@@ -7,6 +7,7 @@
  * `MiddlewareConsumer`.
  */
 
+import { AngularAppEngine } from '@angular/ssr';
 import { Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -15,19 +16,21 @@ import { AngularSSRService } from './angular-ssr.service';
 import type { INestApplication } from '@nestjs/common';
 import type { AddressInfo } from 'node:net';
 
+const buildStubEngine = (): AngularAppEngine => {
+  const engine = Object.create(AngularAppEngine.prototype) as AngularAppEngine & {
+    handle: ReturnType<typeof vi.fn>;
+  };
+  engine.handle = vi.fn().mockResolvedValue({
+    text: () => Promise.resolve('<html><body>e2e ok</body></html>'),
+  });
+  return engine;
+};
+
 @Module({
   imports: [
     AngularSSRModule.forRoot({
       browserDistFolder: '/tmp/never-read-during-tests',
-      bootstrap: () =>
-        Promise.resolve({
-          // Minimal AngularAppEngine-shaped stub.
-          handle: vi.fn().mockResolvedValue({
-            text: () => Promise.resolve('<html><body>e2e ok</body></html>'),
-          }),
-        }),
-      // The middleware otherwise refuses to render '/api/*' — the e2e
-      // exercises that the middleware's skip rule short-circuits before SSR.
+      bootstrap: () => Promise.resolve(buildStubEngine()),
     }),
   ],
 })

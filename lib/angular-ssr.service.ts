@@ -1,9 +1,16 @@
 import { join } from 'node:path';
+import { REQUEST, REQUEST_CONTEXT } from '@angular/core';
+import { AngularAppEngine } from '@angular/ssr';
+import {
+  AngularNodeAppEngine,
+  CommonEngine,
+  createWebRequestFromNodeRequest,
+} from '@angular/ssr/node';
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { InMemoryCacheStorage } from './cache/in-memory-cache-storage';
 import { UrlCacheKeyGenerator } from './cache/url-cache-key-generator';
 import { DebugLogger } from './debug-logger';
-import { ANGULAR_SSR_OPTIONS, REQUEST, RESPONSE } from './tokens';
+import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type {
   AngularSSRModuleOptions,
   CacheKeyGenerator,
@@ -11,8 +18,6 @@ import type {
   CacheStorage,
   StaticProvider,
 } from './interfaces';
-import type { AngularAppEngine } from '@angular/ssr';
-import type { AngularNodeAppEngine, CommonEngine } from '@angular/ssr/node';
 import type { Request, Response } from 'express';
 
 /**
@@ -21,6 +26,15 @@ import type { Request, Response } from 'express';
 export const DEFAULT_CACHE_EXPIRATION_TIME = 60_000;
 
 type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
+
+/**
+ * Per-render context surfaced to Angular components via `@angular/core`'s
+ * `REQUEST_CONTEXT` injection token. Available on every engine path.
+ */
+export interface SSRRequestContext {
+  request: Request;
+  response: Response;
+}
 
 @Injectable()
 export class AngularSSRService implements OnModuleInit {
@@ -40,7 +54,7 @@ export class AngularSSRService implements OnModuleInit {
     this.cacheEnabled = cacheOptions !== false;
 
     if (this.cacheEnabled && cacheOptions) {
-      this.cacheStorage = cacheOptions.storage ?? new InMemoryCacheStorage();
+      this.cacheStorage = cacheOptions.storage ?? new InMemoryCacheStorage(cacheOptions.maxEntries);
       this.cacheKeyGenerator = cacheOptions.keyGenerator ?? new UrlCacheKeyGenerator();
       this.cacheExpiresIn = cacheOptions.expiresIn ?? DEFAULT_CACHE_EXPIRATION_TIME;
     } else {
@@ -60,9 +74,6 @@ export class AngularSSRService implements OnModuleInit {
     }
   }
 
-  /**
-   * Resolve cache options from the provided configuration
-   */
   private resolveCacheOptions(cache: boolean | CacheOptions | undefined): CacheOptions | false {
     if (cache === false) {
       return false;
@@ -74,9 +85,9 @@ export class AngularSSRService implements OnModuleInit {
   }
 
   /**
-   * Detect the engine variant via duck-typing, with `options.engineType` as
-   * an explicit override for minified production builds where class names
-   * are unreliable.
+   * Detect the engine variant. Defaults to `instanceof` against the real
+   * `@angular/ssr` classes (minification-safe). `options.engineType`
+   * overrides for test fixtures or unusual setups.
    */
   private isCommonEngine(engine: AngularEngine): engine is CommonEngine {
     if (this.options.engineType === 'common') {
@@ -85,8 +96,7 @@ export class AngularSSRService implements OnModuleInit {
     if (this.options.engineType !== undefined) {
       return false;
     }
-    const candidate = engine as unknown as { render?: unknown; handle?: unknown };
-    return typeof candidate.render === 'function' && typeof candidate.handle !== 'function';
+    return engine instanceof CommonEngine;
   }
 
   private isNodeAppEngine(engine: AngularEngine): engine is AngularNodeAppEngine {
@@ -96,12 +106,8 @@ export class AngularSSRService implements OnModuleInit {
     if (this.options.engineType !== undefined) {
       return false;
     }
-    return engine.constructor.name === 'AngularNodeAppEngine';
+    return engine instanceof AngularNodeAppEngine;
   }
-
-  /**
-   * Render the Angular application for the given request.
-   */
 
   async render(request: Request, response: Response): Promise<string | null> {
     if (!this.angularEngine) {
@@ -154,8 +160,8 @@ export class AngularSSRService implements OnModuleInit {
     }
     const angularRequest: Request | globalThis.Request = this.isNodeAppEngine(engine)
       ? request
-      : this.createWebRequest(request);
-    return await this.handleAngularEngine(engine, angularRequest, response);
+      : createWebRequestFromNodeRequest(request);
+    return await this.handleAngularEngine(engine, angularRequest, { request, response });
   }
 
   private async renderWithCommonEngine(
@@ -170,10 +176,15 @@ export class AngularSSRService implements OnModuleInit {
       this.options.angularBootstrap ? await this.options.angularBootstrap() : undefined
     ) as Parameters<CommonEngine['render']>[0]['bootstrap'];
 
+    // Provide the same Angular tokens that AngularAppEngine /
+    // AngularNodeAppEngine wire automatically: REQUEST holds a Web Fetch
+    // Request and REQUEST_CONTEXT carries arbitrary per-render data
+    // (here: the original Express request + response).
+    const requestContext: SSRRequestContext = { request, response };
     const providers: StaticProvider[] = [
       ...(this.options.extraProviders ?? []),
-      { provide: REQUEST, useValue: request },
-      { provide: RESPONSE, useValue: response },
+      { provide: REQUEST, useValue: createWebRequestFromNodeRequest(request) },
+      { provide: REQUEST_CONTEXT, useValue: requestContext },
     ];
 
     return await engine.render({
@@ -182,22 +193,20 @@ export class AngularSSRService implements OnModuleInit {
       publicPath: this.options.browserDistFolder,
       url: this.getRequestUrl(request),
       inlineCriticalCss: this.options.inlineCriticalCss ?? true,
-      // Our StaticProvider mirrors @angular/core's structurally so the NestJS
-      // module doesn't pull in an Angular runtime import.
-      providers: providers as never,
+      providers,
     });
   }
 
   private async handleAngularEngine(
     engine: AngularNodeAppEngine | AngularAppEngine,
     request: Request | globalThis.Request,
-    response: Response,
+    requestContext: SSRRequestContext,
   ): Promise<string | null> {
     const handle = engine.handle.bind(engine) as (
       r: Request | globalThis.Request,
-      ctx?: Record<string, unknown>,
+      ctx?: SSRRequestContext,
     ) => Promise<{ text: () => Promise<string> } | null | undefined> | null;
-    const angularResponse = await handle(request, { response });
+    const angularResponse = await handle(request, requestContext);
     if (!angularResponse) {
       return null;
     }
@@ -219,35 +228,6 @@ export class AngularSSRService implements OnModuleInit {
     const host = request.get('host') ?? 'localhost';
     const originalUrl = request.originalUrl || request.url || '/';
     return `${protocol}://${host}${originalUrl}`;
-  }
-
-  /**
-   * Build a Web `Request` from the Express request for AngularAppEngine.
-   *
-   * We hand-roll this rather than reusing `createWebRequestFromNodeRequest`
-   * from `@angular/ssr/node` because that helper pulls in
-   * `@angular/platform-server` transitively, which downstream consumers (and
-   * our own tests) shouldn't have to install just to render with the
-   * lighter-weight engine variants.
-   */
-  private createWebRequest(expressRequest: Request): globalThis.Request {
-    const headers = new Headers();
-    for (const [key, value] of Object.entries(expressRequest.headers)) {
-      if (!value) {
-        continue;
-      }
-      if (Array.isArray(value)) {
-        for (const v of value) {
-          headers.append(key, v);
-        }
-      } else {
-        headers.set(key, value);
-      }
-    }
-    return new Request(this.getRequestUrl(expressRequest), {
-      method: expressRequest.method,
-      headers,
-    });
   }
 
   /**

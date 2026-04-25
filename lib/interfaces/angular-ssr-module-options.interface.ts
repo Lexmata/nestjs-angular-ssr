@@ -1,19 +1,14 @@
 import type { CacheKeyGenerator } from './cache-key-generator.interface';
 import type { CacheStorage } from './cache-storage.interface';
+import type { StaticProvider as AngularStaticProvider } from '@angular/core';
 import type { Request, Response } from 'express';
 
 /**
- * Provider type compatible with Angular's StaticProvider
+ * Provider type alias for Angular's `StaticProvider`. Re-exported so
+ * consumers can write `extraProviders` without a separate `@angular/core`
+ * import.
  */
-export interface StaticProvider {
-  provide: unknown;
-  useValue?: unknown;
-  useClass?: unknown;
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
-  useFactory?: Function;
-  deps?: unknown[];
-  multi?: boolean;
-}
+export type StaticProvider = AngularStaticProvider;
 
 /**
  * Cache configuration options for Angular SSR
@@ -36,6 +31,14 @@ export interface CacheOptions {
    * @default URL-based key generator
    */
   keyGenerator?: CacheKeyGenerator;
+
+  /**
+   * Maximum entries kept by the default `InMemoryCacheStorage` before LRU
+   * eviction kicks in. Ignored when a custom `storage` is supplied.
+   *
+   * @default 1024
+   */
+  maxEntries?: number;
 }
 
 /**

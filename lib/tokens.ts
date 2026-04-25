@@ -1,23 +1,12 @@
 import type { AngularSSRModuleOptions } from './interfaces';
 
 /**
- * Injection token for Express Request object
- * Use with @Inject(REQUEST) in your Angular components (server-side only)
+ * Internal injection token for module options.
  *
- * This is a string token that can be used with both NestJS and Angular DI systems.
- */
-export const REQUEST = 'ANGULAR_SSR_REQUEST';
-
-/**
- * Injection token for Express Response object
- * Use with @Inject(RESPONSE) in your Angular components (server-side only)
- *
- * This is a string token that can be used with both NestJS and Angular DI systems.
- */
-export const RESPONSE = 'ANGULAR_SSR_RESPONSE';
-
-/**
- * Internal injection token for module options
+ * For per-render request / response access in Angular components, use
+ * `@angular/core`'s `REQUEST` and `REQUEST_CONTEXT` tokens (re-exported from
+ * the package entry for convenience). The library wires both tokens for
+ * every engine path.
  */
 export const ANGULAR_SSR_OPTIONS = Symbol('ANGULAR_SSR_OPTIONS');
 

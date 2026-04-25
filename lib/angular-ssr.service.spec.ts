@@ -1,29 +1,39 @@
+import { REQUEST, REQUEST_CONTEXT } from '@angular/core';
+import { AngularAppEngine } from '@angular/ssr';
+import { AngularNodeAppEngine, CommonEngine } from '@angular/ssr/node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AngularSSRService, DEFAULT_CACHE_EXPIRATION_TIME } from './angular-ssr.service';
-import { REQUEST, RESPONSE } from './tokens';
 import type { AngularSSRModuleOptions, CacheStorage } from './interfaces';
 import type { Request, Response } from 'express';
 
-// Engine factories — each shapes the duck-type so the service routes to the
-// expected branch without needing access to the real Angular SSR classes.
+// Build engine instances that pass `instanceof` against the real classes
+// without paying the cost of a full Angular bootstrap. `Object.create`
+// gives us a prototype-linked instance whose only public surface is the
+// method we stub.
 
-const createAppEngine = () => ({
-  // No render method; constructor.name is 'Object' — falls through to the
-  // AngularAppEngine branch.
-  handle: vi.fn(),
-});
-
-const createNodeAppEngine = () => {
-  class AngularNodeAppEngine {
-    handle = vi.fn();
-  }
-  return new AngularNodeAppEngine();
+const createAppEngine = (): AngularAppEngine & { handle: ReturnType<typeof vi.fn> } => {
+  const engine = Object.create(AngularAppEngine.prototype) as AngularAppEngine & {
+    handle: ReturnType<typeof vi.fn>;
+  };
+  engine.handle = vi.fn();
+  return engine;
 };
 
-const createCommonEngine = () => ({
-  // CommonEngine has render() but not handle().
-  render: vi.fn(),
-});
+const createNodeAppEngine = (): AngularNodeAppEngine & { handle: ReturnType<typeof vi.fn> } => {
+  const engine = Object.create(AngularNodeAppEngine.prototype) as AngularNodeAppEngine & {
+    handle: ReturnType<typeof vi.fn>;
+  };
+  engine.handle = vi.fn();
+  return engine;
+};
+
+const createCommonEngine = (): CommonEngine & { render: ReturnType<typeof vi.fn> } => {
+  const engine = Object.create(CommonEngine.prototype) as CommonEngine & {
+    render: ReturnType<typeof vi.fn>;
+  };
+  engine.render = vi.fn();
+  return engine;
+};
 
 const createMockRequest = (overrides: Partial<Request> = {}): Request =>
   ({
@@ -37,7 +47,11 @@ const createMockRequest = (overrides: Partial<Request> = {}): Request =>
     hostname: 'localhost',
     originalUrl: '/test-page',
     url: '/test-page',
+    // `socket` and `headers.host` are required by
+    // `createWebRequestFromNodeRequest` from `@angular/ssr/node`.
+    socket: {},
     headers: {
+      host: 'localhost:3000',
       'user-agent': 'test-agent',
       accept: 'text/html',
     },
@@ -150,11 +164,16 @@ describe('AngularSSRService', () => {
       expect(result).toBeNull();
     });
 
-    it('should handle requests with different protocols', async () => {
+    it('produces an HTTPS URL when the underlying socket is encrypted', async () => {
       const mockHtml = '<html><body>HTTPS</body></html>';
       engine.handle.mockResolvedValue({ text: vi.fn().mockResolvedValue(mockHtml) });
 
-      await service.render(createMockRequest({ protocol: 'https' }), createMockResponse());
+      await service.render(
+        createMockRequest({
+          socket: { encrypted: true },
+        } as unknown as Partial<Request>),
+        createMockResponse(),
+      );
 
       const fetchRequest = engine.handle.mock.calls[0][0] as globalThis.Request;
       expect(fetchRequest.url).toContain('https://');
@@ -166,6 +185,7 @@ describe('AngularSSRService', () => {
 
       const request = createMockRequest({
         headers: {
+          host: 'localhost:3000',
           accept: ['text/html', 'application/json'],
           'user-agent': 'test',
         },
@@ -175,25 +195,14 @@ describe('AngularSSRService', () => {
       expect(result).toBe(mockHtml);
     });
 
-    it('passes the response into the engine via requestContext', async () => {
+    it('passes the request and response into the engine via requestContext', async () => {
       engine.handle.mockResolvedValue({ text: vi.fn().mockResolvedValue('<html></html>') });
 
+      const request = createMockRequest();
       const response = createMockResponse();
-      await service.render(createMockRequest(), response);
+      await service.render(request, response);
 
-      expect(engine.handle.mock.calls[0][1]).toEqual({ response });
-    });
-
-    it('falls back to localhost when the host header is missing', async () => {
-      engine.handle.mockResolvedValue({ text: vi.fn().mockResolvedValue('<html></html>') });
-
-      const request = createMockRequest({
-        get: vi.fn(),
-      } as unknown as Partial<Request>);
-      await service.render(request, createMockResponse());
-
-      const fetchRequest = engine.handle.mock.calls[0][0] as { url: string };
-      expect(fetchRequest.url).toContain('http://localhost/');
+      expect(engine.handle.mock.calls[0][1]).toEqual({ request, response });
     });
 
     it('falls back to "/" when neither originalUrl nor url is set', async () => {
@@ -214,6 +223,7 @@ describe('AngularSSRService', () => {
 
       const request = createMockRequest({
         headers: {
+          host: 'localhost:3000',
           accept: 'text/html',
           'x-empty': undefined,
         },
@@ -243,9 +253,9 @@ describe('AngularSSRService', () => {
       const response = createMockResponse();
       await service.render(request, response);
 
-      // For Node engine, the FIRST arg is the Express request itself, not a
-      // Web fetch Request — that's the entire point of this branch.
-      expect(engine.handle).toHaveBeenCalledWith(request, { response });
+      // For Node engine, the first arg is the Express request itself, not
+      // a Web fetch Request — that's the entire point of this branch.
+      expect(engine.handle).toHaveBeenCalledWith(request, { request, response });
     });
 
     it('returns null when handle resolves to null', async () => {
@@ -315,22 +325,28 @@ describe('AngularSSRService', () => {
       expect(engine.render.mock.calls.at(-1)?.[0].documentFilePath).toBe('/custom/index.html');
     });
 
-    it('injects per-request REQUEST and RESPONSE providers', async () => {
+    it("provides Angular's REQUEST (Web Fetch) and REQUEST_CONTEXT per render", async () => {
       engine.render.mockResolvedValue('<html></html>');
       const request = createMockRequest();
       const response = createMockResponse();
       await service.render(request, response);
 
-      const providers = engine.render.mock.calls[0][0].providers;
-      expect(providers).toEqual(
-        expect.arrayContaining([
-          { provide: REQUEST, useValue: request },
-          { provide: RESPONSE, useValue: response },
-        ]),
-      );
+      const providers = engine.render.mock.calls[0][0].providers as {
+        provide: unknown;
+        useValue: unknown;
+      }[];
+      const reqProvider = providers.find((p) => p.provide === REQUEST);
+      const ctxProvider = providers.find((p) => p.provide === REQUEST_CONTEXT);
+
+      expect(reqProvider).toBeDefined();
+      expect((reqProvider?.useValue as { url: string }).url).toContain('/test-page');
+      expect(ctxProvider).toEqual({
+        provide: REQUEST_CONTEXT,
+        useValue: { request, response },
+      });
     });
 
-    it('preserves user-supplied extraProviders alongside REQUEST/RESPONSE', async () => {
+    it('preserves user-supplied extraProviders alongside the Angular tokens', async () => {
       engine.render.mockResolvedValue('<html></html>');
       const extraProvider = { provide: 'CUSTOM', useValue: 42 };
       const customService = new AngularSSRService({
@@ -345,7 +361,7 @@ describe('AngularSSRService', () => {
         expect.arrayContaining([
           extraProvider,
           expect.objectContaining({ provide: REQUEST }),
-          expect.objectContaining({ provide: RESPONSE }),
+          expect.objectContaining({ provide: REQUEST_CONTEXT }),
         ]),
       );
     });
@@ -378,6 +394,31 @@ describe('AngularSSRService', () => {
       await customService.render(createMockRequest(), createMockResponse());
 
       expect(engine.render.mock.calls.at(-1)?.[0].bootstrap).toBeUndefined();
+    });
+
+    it('falls back to localhost in the rendered url when host is missing', async () => {
+      engine.render.mockResolvedValue('<html></html>');
+      await service.render(
+        createMockRequest({
+          get: vi.fn(),
+        } as unknown as Partial<Request>),
+        createMockResponse(),
+      );
+
+      expect(engine.render.mock.calls.at(-1)?.[0].url).toContain('http://localhost/');
+    });
+
+    it('falls back to "/" in the rendered url when no path is set', async () => {
+      engine.render.mockResolvedValue('<html></html>');
+      await service.render(
+        createMockRequest({
+          originalUrl: undefined,
+          url: undefined,
+        } as unknown as Partial<Request>),
+        createMockResponse(),
+      );
+
+      expect(engine.render.mock.calls.at(-1)?.[0].url).toBe('http://localhost:3000/');
     });
   });
 

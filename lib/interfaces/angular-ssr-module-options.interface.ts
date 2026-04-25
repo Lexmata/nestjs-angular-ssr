@@ -81,19 +81,9 @@ export interface AfterRenderContext {
 }
 
 /**
- * A single stage in the post-render HTML transform pipeline. Receives the
- * HTML emitted by the Angular engine (or the previous transform) and
- * returns the transformed HTML.
- *
- * Transforms may be synchronous or return a `Promise`. They run in the
- * order they're declared in `afterRender`. If any transform throws, the
- * configured `errorHandler` is invoked and no further transforms run.
- *
- * **Cache interaction**: transforms run BEFORE the cache write, so the
- * cached HTML is the post-transform output. If a transform produces
- * per-request output (e.g. a CSP nonce), disable caching for that route
- * via `skipPaths` or `cache: false`, or inject a stable placeholder and
- * replace it on the way out via the `response` (set cookie, header, etc.).
+ * A single stage in the post-render HTML transform pipeline. See the
+ * `afterRender` option on `AngularSSRModuleOptions` for pipeline
+ * semantics and cache interaction.
  */
 export type AfterRenderTransform = (
   html: string,

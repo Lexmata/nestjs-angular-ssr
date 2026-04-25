@@ -440,14 +440,15 @@ import type { AfterRenderTransform } from '@lexmata/nestjs-angular-ssr';
 import { AngularSSRModule } from '@lexmata/nestjs-angular-ssr';
 
 const cspNonce: AfterRenderTransform = (html, { response }) => {
-  const nonce = randomBytes(16).toString('base64');
+  const nonce = randomBytes(16).toString('base64url');
   response.setHeader(
     'Content-Security-Policy',
     `script-src 'self' 'nonce-${nonce}'; style-src 'self' 'nonce-${nonce}'`,
   );
-  return html
-    .replace(/<script(?![^>]*\snonce=)/g, `<script nonce="${nonce}"`)
-    .replace(/<style(?![^>]*\snonce=)/g, `<style nonce="${nonce}"`);
+  // Single pass, alternation over both tags. The negative lookahead skips
+  // tags that already carry a nonce (avoids duplicating the attribute if
+  // another transform stamped one earlier in the pipeline).
+  return html.replace(/<(script|style)(?![^>]*\snonce=)/g, `<$1 nonce="${nonce}"`);
 };
 
 @Module({

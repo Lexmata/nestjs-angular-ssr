@@ -560,9 +560,12 @@ describe('AngularSSRService', () => {
       text: vi.fn().mockResolvedValue(html),
     });
 
-    it('returns the engine output unchanged when afterRender is unset', async () => {
+    it.each([
+      ['afterRender is unset', undefined],
+      ['afterRender is an empty array', []],
+    ])('returns the engine output unchanged when %s', async (_label, afterRender) => {
       engine.handle.mockResolvedValue(mockAngularResponse('<html>raw</html>'));
-      service = new AngularSSRService(mockOptions);
+      service = new AngularSSRService({ ...mockOptions, afterRender });
       await service.onModuleInit();
 
       expect(await service.render(createMockRequest(), createMockResponse())).toBe(
@@ -689,14 +692,6 @@ describe('AngularSSRService', () => {
 
       await expect(service.render(createMockRequest(), createMockResponse())).rejects.toThrow(boom);
       expect(second).not.toHaveBeenCalled();
-    });
-
-    it('treats an empty afterRender array as a no-op', async () => {
-      engine.handle.mockResolvedValue(mockAngularResponse('ok'));
-      service = new AngularSSRService({ ...mockOptions, afterRender: [] });
-      await service.onModuleInit();
-
-      expect(await service.render(createMockRequest(), createMockResponse())).toBe('ok');
     });
   });
 

@@ -1,6 +1,9 @@
-# Source files (dist is included)
+# Belt-and-braces ignore file. `package.json` "files" already whitelists
+# `dist`, so this mostly exists to defend against someone dropping that
+# field in the future — keep it in sync when moving files around.
+
+# Source files (dist is what we publish)
 lib/
-tokens/index.ts
 
 # Tests
 **/*.spec.ts
@@ -10,6 +13,12 @@ vitest.setup.*
 
 # Example application
 example/
+
+# GitHub Pages docs site
+docs/
+
+# Developer worktrees
+.worktrees/
 
 # Config files
 tsconfig.json
@@ -37,6 +46,7 @@ commitlint.config.*
 
 # Package managers
 pnpm-lock.yaml
+pnpm-workspace.yaml
 yarn.lock
 package-lock.json
 

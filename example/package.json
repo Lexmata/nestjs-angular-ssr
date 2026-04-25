@@ -15,7 +15,7 @@
   "dependencies": {
     "@angular/ssr": "^19.0.0",
     "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/platform-express": "^10.0.0",
     "@lexmata/nestjs-angular-ssr": "workspace:*",
     "express": "^4.21.0",

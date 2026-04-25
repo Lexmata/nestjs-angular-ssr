@@ -60,7 +60,7 @@
     "@commitlint/config-conventional": "^19.0.0",
     "@eslint/js": "^10.0.1",
     "@nestjs/common": "^11.0.0",
-    "@nestjs/core": "^11.0.0",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/platform-express": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
     "@types/express": "^5.0.0",

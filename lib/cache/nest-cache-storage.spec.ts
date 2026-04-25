@@ -51,14 +51,26 @@ describe('NestCacheStorage', () => {
       expect(await storage.get('k')).toBeUndefined();
     });
 
-    it('evicts the stale entry so a subsequent read is still a miss', async () => {
+    it('fire-and-forget-evicts the stale entry so a subsequent read is still a miss', async () => {
       const stale: CacheEntry = { content: '<html>old</html>', expiresAt: Date.now() - 1 };
       await cache.set('k', stale);
 
       await storage.get('k');
+      // The del() is intentionally not awaited so the render path
+      // doesn't pay a second RTT on Redis-backed stores. Flush the
+      // microtask queue before asserting.
+      await new Promise((resolve) => setImmediate(resolve));
 
-      // Directly inspect the underlying store — it should be gone.
       expect(await cache.get('k')).toBeUndefined();
+    });
+
+    it('ignores errors from the fire-and-forget eviction', async () => {
+      const stale: CacheEntry = { content: '<html>old</html>', expiresAt: Date.now() - 1 };
+      await cache.set('k', stale);
+      vi.spyOn(cache, 'del').mockRejectedValueOnce(new Error('boom'));
+
+      // No unhandled rejection, no throw.
+      expect(await storage.get('k')).toBeUndefined();
     });
   });
 
@@ -95,9 +107,9 @@ describe('NestCacheStorage', () => {
       expect(await storage.get('k')).toBeUndefined();
     });
 
-    it('returns true for a missing key (cache-manager no-ops but signals success)', async () => {
-      // cache-manager's del() returns true on a missing key in v7; the
-      // adapter just forwards that. This test pins the behaviour.
+    it('returns true for a missing key (matches CacheStorage contract)', async () => {
+      // CacheStorage.delete() returns true on successful completion,
+      // not "true iff a key existed." See `cache-storage.interface.ts`.
       expect(await storage.delete('nope')).toBe(true);
     });
   });
@@ -124,10 +136,13 @@ describe('NestCacheStorage', () => {
       expect(await storage.has('k')).toBe(true);
     });
 
-    it('returns false for a stale key', async () => {
+    it('returns false for a stale key without deleting it', async () => {
       const stale: CacheEntry = { content: 'old', expiresAt: Date.now() - 1 };
       await cache.set('k', stale);
+      const delSpy = vi.spyOn(cache, 'del');
+
       expect(await storage.has('k')).toBe(false);
+      expect(delSpy).not.toHaveBeenCalled();
     });
   });
 });

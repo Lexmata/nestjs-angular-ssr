@@ -1,44 +1,15 @@
+import { isExpired } from './expiry';
 import type { CacheEntry, CacheStorage } from '../interfaces';
 import type { Cache } from '@nestjs/cache-manager';
 
 /**
- * `CacheStorage` adapter that delegates persistence to a
- * `@nestjs/cache-manager` `Cache` service. Use this when the host app
- * already configures `CacheModule` — for example to share a Redis /
- * memcached / multi-store backend across the rest of the application,
- * or to get observability (metrics, tracing) that the default
- * in-memory storage lacks.
+ * `CacheStorage` adapter that delegates to a `@nestjs/cache-manager`
+ * `Cache` service. See the README's "Using `@nestjs/cache-manager` as
+ * the cache backend" section for usage.
  *
- * TTL is **delegated to cache-manager**. `CacheEntry.expiresAt` is
- * still honoured on read (stale entries are reported as misses) but
- * cache-manager's own TTL is what actually reclaims memory; the
- * service's `cache.expiresIn` still drives both values so they stay
- * in sync. If you want cache-manager to own expiration exclusively,
- * set a long `expiresIn` on the service and a shorter TTL on
- * `CacheModule`.
- *
- * @example
- * ```ts
- * import { Inject, Module } from '@nestjs/common';
- * import { Cache, CacheModule } from '@nestjs/cache-manager';
- * import { AngularSSRModule, NestCacheStorage } from '@lexmata/nestjs-angular-ssr';
- *
- * @Module({
- *   imports: [
- *     CacheModule.register({ ttl: 60_000 }),
- *     AngularSSRModule.forRootAsync({
- *       imports: [CacheModule.register({ ttl: 60_000 })],
- *       inject: [Cache],
- *       useFactory: (cache: Cache) => ({
- *         browserDistFolder: '...',
- *         bootstrap: () => getAngularAppEngine(),
- *         cache: { storage: new NestCacheStorage(cache) },
- *       }),
- *     }),
- *   ],
- * })
- * export class AppModule {}
- * ```
+ * TTL is delegated to cache-manager (the backend decides when an entry
+ * is evicted); the service's `cache.expiresIn` is still forwarded as
+ * the per-entry TTL so the two configs stay in sync.
  */
 export class NestCacheStorage implements CacheStorage {
   constructor(private readonly cache: Cache) {}
@@ -48,22 +19,22 @@ export class NestCacheStorage implements CacheStorage {
     if (!stored) {
       return undefined;
     }
-    // cache-manager's own TTL should have evicted this already, but
-    // honour the embedded expiresAt anyway so custom stores that never
-    // evict (e.g. keyv with TTL disabled) don't serve stale content.
-    if (Date.now() > stored.expiresAt) {
-      await this.cache.del(key);
+    if (isExpired(stored)) {
+      // Fire-and-forget — cache-manager's own TTL should have evicted
+      // this already; the explicit del() is belt-and-braces for keyv
+      // adapters configured without eviction. Awaiting the RTT would
+      // double the cost of every stale read on Redis/memcached.
+      // eslint-disable-next-line promise/prefer-await-to-then -- intentional fire-and-forget
+      void this.cache.del(key).catch(() => {
+        /* swallow — best-effort eviction */
+      });
       return undefined;
     }
     return stored;
   }
 
   async set(key: string, entry: CacheEntry): Promise<void> {
-    // Translate the service's absolute expiresAt into a relative TTL
-    // for cache-manager. A past timestamp collapses to 0, which tells
-    // cache-manager to use its own default TTL.
-    const ttl = Math.max(0, entry.expiresAt - Date.now());
-    await this.cache.set(key, entry, ttl > 0 ? ttl : undefined);
+    await this.cache.set(key, entry, deriveTtl(entry));
   }
 
   async delete(key: string): Promise<boolean> {
@@ -74,7 +45,24 @@ export class NestCacheStorage implements CacheStorage {
     await this.cache.clear();
   }
 
+  /**
+   * Read-only — does NOT evict stale entries (see `get()` for the
+   * eviction path). Keeps `has()` cheap enough to use as a predicate
+   * from caller code.
+   */
   async has(key: string): Promise<boolean> {
-    return (await this.get(key)) !== undefined;
+    const stored = await this.cache.get<CacheEntry>(key);
+    return stored != null && !isExpired(stored);
   }
+}
+
+/**
+ * Translate the service's absolute `expiresAt` into cache-manager's
+ * relative TTL. A past or present timestamp collapses to `undefined`,
+ * handing control back to the `CacheModule.ttl` default so the caller
+ * isn't silently writing entries that immediately expire.
+ */
+function deriveTtl(entry: CacheEntry): number | undefined {
+  const ttl = entry.expiresAt - Date.now();
+  return ttl > 0 ? ttl : undefined;
 }

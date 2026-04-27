@@ -1,3 +1,11 @@
+// Angular's partially-compiled libraries (e.g. @angular/common's
+// PlatformLocation) need the JIT compiler at class-definition time when
+// loaded outside an Angular platform bootstrap — which is exactly what
+// happens when this library is imported from a NestJS server entry. Load
+// the compiler eagerly so the Angular Linker has a JIT fallback available.
+// Safe everywhere: in an AOT bundle the compiler is tree-shaken out.
+import '@angular/compiler';
+
 // Middleware
 export { AngularSSRMiddleware } from './angular-ssr.middleware';
 

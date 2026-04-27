@@ -1,15 +1,20 @@
 {
   "name": "@lexmata/nestjs-angular-ssr",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Angular SSR (v19+) module for NestJS framework",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/cjs/index.js",
+  "module": "dist/esm/index.js",
+  "types": "dist/cjs/index.d.ts",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
-    "build:watch": "tsc --watch",
+    "build": "pnpm run build:cjs && pnpm run build:esm && pnpm run build:fix-esm && pnpm run build:markers",
+    "build:cjs": "tsc -p tsconfig.cjs.json",
+    "build:esm": "tsc -p tsconfig.esm.json",
+    "build:fix-esm": "node scripts/fix-esm-extensions.mjs",
+    "build:markers": "node scripts/emit-package-json.mjs",
+    "build:watch": "tsc -p tsconfig.cjs.json --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run clean && pnpm run build",
     "test": "vitest run",
@@ -109,9 +114,14 @@
   },
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.js"
+      "import": {
+        "types": "./dist/esm/index.d.ts",
+        "default": "./dist/esm/index.js"
+      },
+      "require": {
+        "types": "./dist/cjs/index.d.ts",
+        "default": "./dist/cjs/index.js"
+      }
     }
   },
   "lint-staged": {

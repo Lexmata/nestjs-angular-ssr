@@ -639,6 +639,21 @@ We welcome contributions! Please see our [Contributing Guide](.github/CONTRIBUTI
 4. Push to the branch (`git push origin feat/amazing-feature`)
 5. Open a Pull Request
 
+## Releasing
+
+Releases are published manually. There is no CI publish workflow — maintain `npm publish` as the actual step after cutting a tag:
+
+```bash
+git fetch --tags
+git checkout vX.Y.Z             # tag must already exist on main
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+npm publish --access public     # requires `npm login` to the @lexmata scope
+```
+
+The maintainer who cuts the GitHub Release is responsible for the `npm publish` that follows.
+
 ## Support
 
 - [Documentation](https://github.com/Lexmata/nestjs-angular-ssr#readme)

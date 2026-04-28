@@ -76,6 +76,13 @@ export class AngularSSRMiddleware implements NestMiddleware {
     if (res.headersSent) {
       return 'response headers already sent';
     }
+    if (this.ssrService.isDisabled()) {
+      // `allowMissingBuild` is on and bootstrap() found no manifest. Hand
+      // the request back to Express so downstream middleware (static
+      // file handlers, 404 fallback, etc.) can respond instead of the
+      // middleware hanging on a service that never initialised.
+      return 'SSR engine disabled (allowMissingBuild)';
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return `method ${req.method} not GET/HEAD`;
     }

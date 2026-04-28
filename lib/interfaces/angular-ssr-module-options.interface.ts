@@ -143,6 +143,26 @@ export interface AngularSSRModuleOptions {
   engineType?: AngularEngineType;
 
   /**
+   * Gracefully degrade when the Angular build artefacts aren't present at
+   * bootstrap time. Useful for dev loops where the API backend is run
+   * directly from source (e.g. `tsx src/server/main.ts`) before any
+   * `ng build` has emitted the manifest, or when a separate dev server
+   * (`ng serve`) is handling frontend SSR.
+   *
+   * When `true` and `bootstrap()` throws `ERR_MODULE_NOT_FOUND`, the
+   * service logs a warning, stays in a disabled state, and the
+   * middleware forwards every request to `next()` (no SSR). Any other
+   * bootstrap error is still thrown — only the module-not-found class
+   * is swallowed.
+   *
+   * Leave `false` in production: a missing manifest there is a real bug
+   * that should crash the container so the deploy rolls back.
+   *
+   * @default false
+   */
+  allowMissingBuild?: boolean;
+
+  /**
    * Route path(s) on which the SSR middleware will run. Default
    * `'{/*splat}'` is the NestJS 11 / Express 5 / path-to-regexp v8 splat
    * pattern that matches both root `/` and every nested path.

@@ -157,6 +157,67 @@ describe('AngularSSRService', () => {
 
       await expect(service.onModuleInit()).rejects.toThrow(/resolved to undefined/);
     });
+
+    describe('allowMissingBuild', () => {
+      const makeModuleNotFoundError = (message: string): Error & { code: string } => {
+        const err = new Error(message) as Error & { code: string };
+        err.code = 'ERR_MODULE_NOT_FOUND';
+        return err;
+      };
+
+      it('swallows ERR_MODULE_NOT_FOUND when allowMissingBuild is true', async () => {
+        mockOptions.allowMissingBuild = true;
+        mockOptions.bootstrap = vi
+          .fn()
+          .mockRejectedValue(makeModuleNotFoundError("Cannot find module './manifest.mjs'"));
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).resolves.toBeUndefined();
+        expect(service.isDisabled()).toBe(true);
+      });
+
+      it('also accepts legacy MODULE_NOT_FOUND code from CommonJS require', async () => {
+        mockOptions.allowMissingBuild = true;
+        mockOptions.bootstrap = vi
+          .fn()
+          .mockRejectedValue(makeModuleNotFoundError("Cannot find module './foo'"));
+        // Swap the code to the CJS variant.
+        const bootstrapErr = new Error('cjs require miss') as Error & { code: string };
+        bootstrapErr.code = 'MODULE_NOT_FOUND';
+        mockOptions.bootstrap = vi.fn().mockRejectedValue(bootstrapErr);
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).resolves.toBeUndefined();
+        expect(service.isDisabled()).toBe(true);
+      });
+
+      it('re-throws non-module-not-found errors even when allowMissingBuild is true', async () => {
+        mockOptions.allowMissingBuild = true;
+        mockOptions.bootstrap = vi.fn().mockRejectedValue(new Error('logic bug in factory'));
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).rejects.toThrow('logic bug in factory');
+        expect(service.isDisabled()).toBe(false);
+      });
+
+      it('re-throws ERR_MODULE_NOT_FOUND when allowMissingBuild is false (default)', async () => {
+        mockOptions.bootstrap = vi
+          .fn()
+          .mockRejectedValue(makeModuleNotFoundError("Cannot find module './manifest.mjs'"));
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).rejects.toThrow(/Cannot find module/);
+        expect(service.isDisabled()).toBe(false);
+      });
+
+      it('isDisabled() stays false after a successful bootstrap', async () => {
+        mockOptions.allowMissingBuild = true;
+        service = new AngularSSRService(mockOptions);
+        await service.onModuleInit();
+
+        expect(service.isDisabled()).toBe(false);
+      });
+    });
   });
 
   describe('render() — AngularAppEngine path (default fallback)', () => {

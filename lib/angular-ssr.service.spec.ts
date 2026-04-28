@@ -176,6 +176,29 @@ describe('AngularSSRService', () => {
         expect(service.isDisabled()).toBe(true);
       });
 
+      it('accepts plain Error with "Cannot find module ..." message (swc-node shape)', async () => {
+        // @swc-node/register rethrows dynamic import failures as plain Error
+        // with no `code` field. Fall back to message matching so the
+        // allowMissingBuild path still fires under swc-node.
+        mockOptions.allowMissingBuild = true;
+        mockOptions.bootstrap = vi
+          .fn()
+          .mockRejectedValue(new Error("Cannot find module '/app/dist/manifest.mjs'"));
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).resolves.toBeUndefined();
+        expect(service.isDisabled()).toBe(true);
+      });
+
+      it('does NOT match a generic error that lacks both code and matching message', async () => {
+        mockOptions.allowMissingBuild = true;
+        mockOptions.bootstrap = vi.fn().mockRejectedValue(new Error('some other failure'));
+        service = new AngularSSRService(mockOptions);
+
+        await expect(service.onModuleInit()).rejects.toThrow('some other failure');
+        expect(service.isDisabled()).toBe(false);
+      });
+
       it('also accepts legacy MODULE_NOT_FOUND code from CommonJS require', async () => {
         mockOptions.allowMissingBuild = true;
         mockOptions.bootstrap = vi

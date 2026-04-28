@@ -82,3 +82,70 @@ describe('AngularSSRModule (e2e wildcard routing)', () => {
     expect(service).toBeInstanceOf(AngularSSRService);
   });
 });
+
+/**
+ * Second e2e harness that boots with a real `browserDistFolder` populated
+ * with static files. Catches the regression where mounting
+ * `express.static` via `forRoutes('{/*splat}')` caused Express to issue
+ * a 301 redirect to `/favicon.ico/` instead of serving the file (LM-106).
+ */
+describe('AngularSSRModule (static asset serving)', () => {
+  let app: INestApplication;
+  let baseUrl: string;
+  let tmpDir: string;
+
+  beforeAll(async () => {
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    tmpDir = mkdtempSync(join(tmpdir(), 'ssr-e2e-static-'));
+    writeFileSync(join(tmpDir, 'favicon.ico'), 'ICO-DATA');
+    mkdirSync(join(tmpDir, 'images'));
+    writeFileSync(join(tmpDir, 'images', 'logo.png'), 'PNG-DATA');
+
+    @Module({
+      imports: [
+        AngularSSRModule.forRoot({
+          browserDistFolder: tmpDir,
+          bootstrap: () => Promise.resolve(buildStubEngine()),
+        }),
+      ],
+    })
+    // eslint-disable-next-line @typescript-eslint/no-extraneous-class -- nest module token
+    class StaticE2EModule {}
+
+    app = await NestFactory.create(StaticE2EModule, { logger: ['error', 'warn'] });
+    await app.listen(0);
+    const server = app.getHttpServer() as { address: () => AddressInfo };
+    const port = server.address().port;
+    baseUrl = `http://127.0.0.1:${String(port)}`;
+  });
+
+  afterAll(async () => {
+    await app.close();
+    const { rmSync } = await import('node:fs');
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('serves root-level static files (favicon.ico) with a 200', async () => {
+    const res = await fetch(`${baseUrl}/favicon.ico`, { redirect: 'manual' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('ICO-DATA');
+  });
+
+  it('serves nested static files (images/logo.png) with a 200', async () => {
+    const res = await fetch(`${baseUrl}/images/logo.png`, { redirect: 'manual' });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('PNG-DATA');
+  });
+
+  it('does not 301-redirect static file requests to a trailing-slash path', async () => {
+    // Regression guard for LM-106: when the static middleware was mounted
+    // via `forRoutes('{/*splat}')`, Express issued a 301 to
+    // `/favicon.ico/` instead of serving the file.
+    const res = await fetch(`${baseUrl}/favicon.ico`, { redirect: 'manual' });
+    expect(res.status).not.toBe(301);
+    expect(res.headers.get('location')).toBeNull();
+  });
+});

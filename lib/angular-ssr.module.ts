@@ -15,9 +15,20 @@ import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
 
 // '{/*splat}' is the NestJS 11 / Express 5 / path-to-regexp v8 splat
-// syntax that matches both '/' and every nested path. Override via
-// renderPath / rootStaticPath for a tighter mount point.
+// syntax that matches both '/' and every nested path. Used for the SSR
+// middleware's `renderPath` default. Override via renderPath for a
+// tighter mount point.
 const DEFAULT_WILDCARD = '{/*splat}';
+
+// `express.static` misbehaves when mounted via `forRoutes('{/*splat}')` —
+// Express treats the splat as a named mount segment and strips it from
+// the incoming URL before resolving against the static root, which turns
+// `/favicon.ico` into a directory lookup and issues a spurious 301 to
+// `/favicon.ico/`. Mounting on the literal `'/'` prefix (the traditional
+// `app.use('/', express.static(...))` form) sidesteps the splat path
+// parser entirely and lets express.static match every request against
+// the browserDistFolder as intended.
+const STATIC_MOUNT_PATH = '/';
 
 @Global()
 @Module({})
@@ -68,7 +79,7 @@ export class AngularSSRModule implements NestModule {
     const staticPath =
       typeof this.options.rootStaticPath === 'string'
         ? this.options.rootStaticPath
-        : DEFAULT_WILDCARD;
+        : STATIC_MOUNT_PATH;
 
     this.logger.debug(`configure() staticPath=${staticPath} renderPaths=${renderPaths.join(',')}`);
 

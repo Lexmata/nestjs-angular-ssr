@@ -188,10 +188,13 @@ describe('AngularSSRModule', () => {
       expect(applyResult.forRoutes).toHaveBeenCalledWith('{/*splat}');
     });
 
-    it('uses the splat wildcard for both static and SSR routes by default', () => {
+    it("mounts express.static at '/' and the SSR middleware at the splat wildcard by default", () => {
+      // The static middleware must mount at '/' (or an equivalent literal
+      // prefix) because `forRoutes('{/*splat}')` confuses express.static
+      // into issuing spurious 301 redirects (e.g. /favicon.ico → /favicon.ico/).
       const module = new AngularSSRModule(mockOptions);
       module.configure(mockConsumer);
-      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(1, '{/*splat}');
+      expect(applyResult.forRoutes).toHaveBeenNthCalledWith(1, '/');
       expect(applyResult.forRoutes).toHaveBeenNthCalledWith(2, '{/*splat}');
     });
 

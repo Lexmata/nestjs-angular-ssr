@@ -29,6 +29,22 @@ export const DEFAULT_CACHE_EXPIRATION_TIME = 60_000;
 type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
 
 /**
+ * Narrow the thrown value to Node's "module not found" failure. That's
+ * what surfaces when `bootstrap()` does a dynamic `import()` of the
+ * Angular server manifest before `ng build` has emitted it. The helper
+ * stays strict about the `code` field so unrelated errors (type errors
+ * inside the bootstrap factory, throws from the engine constructor, etc.)
+ * still propagate.
+ */
+function isModuleNotFoundError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
+}
+
+/**
  * Per-render context surfaced to Angular components via `@angular/core`'s
  * `REQUEST_CONTEXT` injection token. Available on every engine path.
  */
@@ -41,6 +57,11 @@ export interface SSRRequestContext {
 export class AngularSSRService implements OnModuleInit {
   private readonly logger = new DebugLogger(AngularSSRService.name);
   private angularEngine: AngularEngine | null = null;
+  // True when `allowMissingBuild` is set and the Angular build artefacts
+  // (manifest, server bundle) aren't present. Rendering is a no-op; the
+  // middleware asks `isDisabled()` before invoking `render()` and falls
+  // through to `next()` instead.
+  private disabled = false;
 
   private readonly cacheEnabled: boolean;
   private readonly cacheStorage: CacheStorage;
@@ -70,6 +91,22 @@ export class AngularSSRService implements OnModuleInit {
     try {
       engine = (await this.options.bootstrap()) as AngularEngine | null | undefined;
     } catch (error) {
+      // When the consumer opted into `allowMissingBuild`, swallow the
+      // specific "module not found" failure that shows up when the
+      // Angular build hasn't produced `angular-app-engine-manifest.mjs`
+      // (or an equivalent server bundle file) yet. Any other failure —
+      // logic error in the bootstrap factory, unexpected engine type,
+      // etc. — still propagates so production crashes loudly.
+      if (this.options.allowMissingBuild && isModuleNotFoundError(error)) {
+        this.disabled = true;
+        this.logger.warn(
+          `Angular SSR disabled — bootstrap() failed with ERR_MODULE_NOT_FOUND. ` +
+            `This is expected when running the backend from source before \`ng build\` ` +
+            `has emitted the server bundle. Set \`allowMissingBuild: false\` in ` +
+            `production to fail-fast on a missing manifest.`,
+        );
+        return;
+      }
       this.logger.error('Failed to initialize Angular SSR engine', error);
       throw error;
     }
@@ -84,6 +121,16 @@ export class AngularSSRService implements OnModuleInit {
     }
     this.angularEngine = engine;
     this.logger.log(`Angular SSR engine initialized (${engine.constructor.name})`);
+  }
+
+  /**
+   * True when the module was started with `allowMissingBuild: true` and
+   * the Angular bootstrap failed with a module-not-found error. Callers
+   * (principally the middleware) should skip rendering and pass the
+   * request through.
+   */
+  public isDisabled(): boolean {
+    return this.disabled;
   }
 
   private resolveCacheOptions(cache: boolean | CacheOptions | undefined): CacheOptions | false {

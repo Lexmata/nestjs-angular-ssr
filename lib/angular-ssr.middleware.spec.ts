@@ -23,13 +23,17 @@ const createMockResponse = (overrides: Partial<Response> = {}): Response =>
 
 describe('AngularSSRMiddleware', () => {
   let middleware: AngularSSRMiddleware;
-  let mockSSRService: { render: ReturnType<typeof vi.fn> };
+  let mockSSRService: {
+    render: ReturnType<typeof vi.fn>;
+    isDisabled: ReturnType<typeof vi.fn>;
+  };
   let mockOptions: AngularSSRModuleOptions;
   let mockNext: NextFunction;
 
   beforeEach(() => {
     mockSSRService = {
       render: vi.fn(),
+      isDisabled: vi.fn().mockReturnValue(false),
     };
     mockOptions = {
       browserDistFolder: '/dist/browser',
@@ -59,6 +63,17 @@ describe('AngularSSRMiddleware', () => {
 
     it('should call next for API routes', async () => {
       const request = createMockRequest({ originalUrl: '/api/users' });
+      const response = createMockResponse();
+
+      await middleware.use(request, response, mockNext);
+
+      expect(mockNext).toHaveBeenCalled();
+      expect(mockSSRService.render).not.toHaveBeenCalled();
+    });
+
+    it('bypasses SSR when the service reports itself as disabled', async () => {
+      mockSSRService.isDisabled.mockReturnValue(true);
+      const request = createMockRequest();
       const response = createMockResponse();
 
       await middleware.use(request, response, mockNext);

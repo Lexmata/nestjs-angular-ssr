@@ -29,19 +29,26 @@ export const DEFAULT_CACHE_EXPIRATION_TIME = 60_000;
 type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
 
 /**
- * Narrow the thrown value to Node's "module not found" failure. That's
- * what surfaces when `bootstrap()` does a dynamic `import()` of the
- * Angular server manifest before `ng build` has emitted it. The helper
- * stays strict about the `code` field so unrelated errors (type errors
- * inside the bootstrap factory, throws from the engine constructor, etc.)
- * still propagate.
+ * Narrow the thrown value to a "module not found" failure from a dynamic
+ * `import()` inside `bootstrap()`. Native Node gives us a structured
+ * `code: 'ERR_MODULE_NOT_FOUND'` (ESM) or `'MODULE_NOT_FOUND'` (CJS),
+ * but wrappers like `@swc-node/register` strip `code` and surface a
+ * plain `Error` whose message starts with `Cannot find module` — fall
+ * back to a message match so the `allowMissingBuild` path still fires
+ * under swc-node. Other thrown values (type errors inside the bootstrap
+ * factory, throws from the engine constructor, etc.) still propagate
+ * because their messages don't begin with that string.
  */
 function isModuleNotFoundError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) {
     return false;
   }
   const code = (error as { code?: unknown }).code;
-  return code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND';
+  if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
+    return true;
+  }
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && message.startsWith('Cannot find module');
 }
 
 /**

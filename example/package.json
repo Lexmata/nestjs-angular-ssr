@@ -13,9 +13,9 @@
     "start:prod": "NODE_ENV=production node dist/main.js"
   },
   "dependencies": {
-    "@angular/ssr": "^19.0.0",
+    "@angular/ssr": "^19.2.21",
     "@nestjs/common": "^10.0.0",
-    "@nestjs/core": "^10.0.0",
+    "@nestjs/core": "^11.1.18",
     "@nestjs/platform-express": "^10.0.0",
     "@lexmata/nestjs-angular-ssr": "workspace:*",
     "express": "^4.21.0",

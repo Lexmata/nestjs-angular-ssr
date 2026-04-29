@@ -87,8 +87,8 @@ importers:
         specifier: ^63.0.0
         version: 63.0.0(eslint@10.1.0(jiti@2.6.1))
       express:
-        specifier: ^4.21.0
-        version: 4.22.1
+        specifier: ^5.2.1
+        version: 5.2.1
       husky:
         specifier: ^9.0.0
         version: 9.1.7
@@ -5341,7 +5341,7 @@ snapshots:
       once: 1.4.0
       parseurl: 1.3.3
       proxy-addr: 2.0.7
-      qs: 6.14.0
+      qs: 6.15.1
       range-parser: 1.2.1
       router: 2.2.0
       send: 1.2.1

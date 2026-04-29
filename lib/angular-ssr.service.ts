@@ -74,6 +74,10 @@ export class AngularSSRService implements OnModuleInit {
   private readonly cacheStorage: CacheStorage;
   private readonly cacheKeyGenerator: CacheKeyGenerator;
   private readonly cacheExpiresIn: number;
+  // True once we've emitted the diagnostic warning for
+  // `engine.handle()` returning null. Re-firing on every request would
+  // drown real logs — we only need the one nudge.
+  private nullResponseDiagnosticEmitted = false;
 
   constructor(
     @Inject(ANGULAR_SSR_OPTIONS)
@@ -283,9 +287,64 @@ export class AngularSSRService implements OnModuleInit {
     ) => Promise<{ text: () => Promise<string> } | null | undefined> | null;
     const angularResponse = await handle(request, requestContext);
     if (!angularResponse) {
+      this.diagnoseNullEngineResponse(request);
       return null;
     }
     return await angularResponse.text();
+  }
+
+  /**
+   * `engine.handle()` returning null is a silent failure mode with
+   * three common causes:
+   *
+   *   1. No server-routes configuration. Angular 21's SSR defaults
+   *      every route to `RenderMode.Prerender`; at request time
+   *      `AngularServerApp.handleRendering()` refuses to render
+   *      Prerender routes unless `allowStaticRouteRender: true` or a
+   *      pre-built static asset exists. Fix: configure
+   *      `provideServerRendering(withRoutes([...]))` and set
+   *      `renderMode: RenderMode.Server` for routes rendered at
+   *      request time.
+   *   2. Hostname rejected by `allowedHosts`. The engine returns the
+   *      plain-text "URL with hostname '...' is not allowed" response
+   *      (status 200), so this usually doesn't surface as null —
+   *      listed here for completeness.
+   *   3. Angular route genuinely doesn't match the pathname (e.g.
+   *      the request is for a static asset that reached the SSR
+   *      middleware instead of `express.static`). The middleware's
+   *      static-file-extension bypass should catch this upstream, so
+   *      if you're seeing null for a non-asset path it almost
+   *      certainly isn't cause 3.
+   *
+   * Warning is emitted once per process lifetime to avoid log spam.
+   * Suppress entirely with `disableNullResponseDiagnostic: true` in
+   * module options.
+   */
+  private diagnoseNullEngineResponse(request: Request | globalThis.Request): void {
+    if (this.nullResponseDiagnosticEmitted) {
+      return;
+    }
+    if (this.options.disableNullResponseDiagnostic) {
+      return;
+    }
+    this.nullResponseDiagnosticEmitted = true;
+    const url =
+      'url' in request
+        ? (request as globalThis.Request).url
+        : (request as Request).originalUrl || (request as Request).url;
+    this.logger.warn(
+      `Angular SSR engine.handle() returned null for ${url}. ` +
+        `The most common cause in Angular 21+ is a missing server-routes ` +
+        `configuration — every route defaults to RenderMode.Prerender and ` +
+        `the engine refuses to render Prerender routes at request time ` +
+        `without a pre-built asset. Add ` +
+        `'provideServerRendering(withRoutes([{ path: "**", renderMode: ` +
+        `RenderMode.Server }]))' to your app.config.server.ts. See ` +
+        `https://angular.dev/guide/hybrid-rendering#withroutes for details. ` +
+        `(This warning fires once per process; set ` +
+        `disableNullResponseDiagnostic: true in AngularSSRModule options ` +
+        `to silence it.)`,
+    );
   }
 
   /**

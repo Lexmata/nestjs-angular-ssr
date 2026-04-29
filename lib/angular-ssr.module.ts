@@ -14,11 +14,27 @@ import { DebugLogger } from './debug-logger';
 import { ANGULAR_SSR_OPTIONS } from './tokens';
 import type { AngularSSRModuleAsyncOptions, AngularSSRModuleOptions } from './interfaces';
 
-// '{/*splat}' is the NestJS 11 / Express 5 / path-to-regexp v8 splat
-// syntax that matches both '/' and every nested path. Used for the SSR
-// middleware's `renderPath` default. Override via renderPath for a
-// tighter mount point.
-const DEFAULT_WILDCARD = '{/*splat}';
+// '/{*splat}' is the only wildcard that works under BOTH NestJS 11 and
+// Express 5 / path-to-regexp v8. A brief taxonomy of patterns that
+// don't:
+//   - '*'          — passes NestJS's simple-wildcard list but under
+//                    path-to-regexp v8 it is a literal named segment
+//                    and never matches the empty root path.
+//   - '{/*splat}'  — valid under path-to-regexp v8, but NestJS 11's
+//                    `RouteInfoPathExtractor.isAWildcard()` regex
+//                    (`/^\/\{.*\}.*|^\/\*.*$/`) requires a leading
+//                    forward slash. Without one, NestJS treats the
+//                    string as a literal path and the middleware binds
+//                    to the exact string `/{*splat}` — never firing
+//                    for `/`, `/home`, or any real request. The
+//                    library shipped with this default through 0.4.2;
+//                    consumers had to override explicitly to work
+//                    around the invisible mis-binding.
+//   - '/{*splat}'  — starts with `/`, so NestJS treats it as a
+//                    wildcard. The splat body matches every path
+//                    (root + nested) under path-to-regexp v8. This
+//                    is the default every consumer wants.
+const DEFAULT_WILDCARD = '/{*splat}';
 
 // `express.static` misbehaves when mounted via `forRoutes('{/*splat}')` —
 // Express treats the splat as a named mount segment and strips it from

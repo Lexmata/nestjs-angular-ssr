@@ -164,12 +164,33 @@ export interface AngularSSRModuleOptions {
 
   /**
    * Route path(s) on which the SSR middleware will run. Default
-   * `'{/*splat}'` is the NestJS 11 / Express 5 / path-to-regexp v8 splat
-   * pattern that matches both root `/` and every nested path.
+   * `'/{*splat}'` — the only pattern that works under BOTH NestJS 11's
+   * middleware path extractor (`RouteInfoPathExtractor.isAWildcard()`
+   * requires a leading `/`) and Express 5 / path-to-regexp v8 (where a
+   * bare `*` is a literal segment name that doesn't match the empty
+   * root path).
    *
-   * @default '{/*splat}'
+   * Prior versions (<= 0.4.2) defaulted to `'{/*splat}'` which failed
+   * Nest's wildcard check silently — the middleware bound to the
+   * literal string rather than a wildcard and never fired. Upgrading
+   * consumers on Nest 11 no longer need a manual override.
+   *
+   * @default '/{*splat}'
    */
   renderPath?: string | string[];
+
+  /**
+   * Suppress the one-time diagnostic warning emitted when
+   * `engine.handle()` returns `null` for a non-asset path. The
+   * warning helps diagnose a common Angular 21+ misconfiguration
+   * (missing `provideServerRendering(withRoutes(...))` → every route
+   * defaults to `RenderMode.Prerender` → engine refuses to render at
+   * request time → null). Set to `true` if your app intentionally
+   * returns null for some paths and the warning is noise.
+   *
+   * @default false
+   */
+  disableNullResponseDiagnostic?: boolean;
 
   /**
    * Route path on which `express.static()` will serve files from

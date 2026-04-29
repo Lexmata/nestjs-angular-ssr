@@ -2,7 +2,7 @@
  * End-to-end test that boots a real NestJS application with the SSR module
  * mounted, then issues real HTTP requests through Express. Exists to catch
  * regressions that mocked unit tests cannot — most importantly, that the
- * wildcard route default (`'{/*splat}'`) is actually accepted by the real
+ * wildcard route default (`'/{*splat}'`) is actually accepted by the real
  * path-to-regexp matcher inside NestJS, not just by a mocked
  * `MiddlewareConsumer`.
  */
@@ -94,7 +94,7 @@ describe('AngularSSRModule (e2e wildcard routing)', () => {
 /**
  * Second e2e harness that boots with a real `browserDistFolder` populated
  * with static files. Catches the regression where mounting
- * `express.static` via `forRoutes('{/*splat}')` caused Express to issue
+ * `express.static` via `forRoutes('/{*splat}')` caused Express to issue
  * a 301 redirect to `/favicon.ico/` instead of serving the file (LM-106).
  */
 describe('AngularSSRModule (static asset serving)', () => {
@@ -150,7 +150,7 @@ describe('AngularSSRModule (static asset serving)', () => {
 
   it('does not 301-redirect static file requests to a trailing-slash path', async () => {
     // Regression guard for LM-106: when the static middleware was mounted
-    // via `forRoutes('{/*splat}')`, Express issued a 301 to
+    // via `forRoutes('/{*splat}')`, Express issued a 301 to
     // `/favicon.ico/` instead of serving the file.
     const res = await fetch(`${baseUrl}/favicon.ico`, { redirect: 'manual' });
     expect(res.status).not.toBe(301);

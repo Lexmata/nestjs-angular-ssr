@@ -376,6 +376,39 @@ describe('AngularSSRService', () => {
       expect(result).toBeNull();
     });
 
+    it('emits a one-time diagnostic warning the first time handle returns null', async () => {
+      engine.handle.mockResolvedValue(null);
+      const warnSpy = vi.spyOn(
+        (service as unknown as { logger: { warn: (m: string) => void } }).logger,
+        'warn',
+      );
+
+      await service.render(createMockRequest(), createMockResponse());
+      await service.render(createMockRequest(), createMockResponse());
+      await service.render(createMockRequest(), createMockResponse());
+
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/engine\.handle\(\) returned null/);
+      expect(warnSpy.mock.calls[0][0]).toMatch(/withRoutes/);
+    });
+
+    it('suppresses the diagnostic when disableNullResponseDiagnostic is true', async () => {
+      const silenced = new AngularSSRService({
+        ...mockOptions,
+        disableNullResponseDiagnostic: true,
+      });
+      await silenced.onModuleInit();
+      engine.handle.mockResolvedValue(null);
+      const warnSpy = vi.spyOn(
+        (silenced as unknown as { logger: { warn: (m: string) => void } }).logger,
+        'warn',
+      );
+
+      await silenced.render(createMockRequest(), createMockResponse());
+
+      expect(warnSpy).not.toHaveBeenCalled();
+    });
+
     it('honours an explicit engineType override even when ducktype would mismatch', async () => {
       const ducklessEngine = { handle: vi.fn() };
       ducklessEngine.handle.mockResolvedValue({

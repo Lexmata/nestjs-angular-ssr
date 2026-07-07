@@ -59,12 +59,21 @@ jobs:
         run: pnpm typecheck
 
   test:
-    name: Test (Node ${{ matrix.node-version }})
+    name: Test (Angular ${{ matrix.angular }}, Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # Angular version support windows differ: 19/20/21 run on Node
+      # >=20.19, Angular 22 requires Node >=22. zone.js must match the
+      # Angular major (19 pins ~0.15.0; 20+ dropped the peer, use 0.16).
       matrix:
-        node-version: ['20', '22', '24']
+        include:
+          - { angular: '19', node-version: '20', zonejs: '0.15' }
+          - { angular: '19', node-version: '24', zonejs: '0.15' }
+          - { angular: '20', node-version: '20', zonejs: '0.16' }
+          - { angular: '21', node-version: '22', zonejs: '0.16' }
+          - { angular: '22', node-version: '22', zonejs: '0.16' }
+          - { angular: '22', node-version: '24', zonejs: '0.16', coverage: true }
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,11 +90,27 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Angular ${{ matrix.angular }}
+        if: matrix.angular != '22'
+        run: >-
+          pnpm add -Dw
+          @angular/common@${{ matrix.angular }}
+          @angular/compiler@${{ matrix.angular }}
+          @angular/core@${{ matrix.angular }}
+          @angular/platform-browser@${{ matrix.angular }}
+          @angular/platform-server@${{ matrix.angular }}
+          @angular/router@${{ matrix.angular }}
+          @angular/ssr@${{ matrix.angular }}
+          zone.js@${{ matrix.zonejs }}
+
+      - name: Type check against Angular ${{ matrix.angular }}
+        run: pnpm typecheck
+
       - name: Run tests with coverage
         run: pnpm test:coverage
 
       - name: Upload coverage reports
-        if: matrix.node-version == '20'
+        if: matrix.coverage
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}

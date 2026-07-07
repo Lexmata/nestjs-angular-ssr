@@ -1,6 +1,6 @@
 {
   "name": "@lexmata/nestjs-angular-ssr",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Angular SSR (v19+) module for NestJS framework",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -67,10 +67,13 @@
     }
   },
   "devDependencies": {
-    "@angular/compiler": "^19.2.21",
-    "@angular/core": "^19.2.21",
-    "@angular/platform-server": "^19.2.21",
-    "@angular/ssr": "^19.2.24",
+    "@angular/common": "^22.0.5",
+    "@angular/compiler": "^22.0.5",
+    "@angular/core": "^22.0.5",
+    "@angular/platform-browser": "^22.0.5",
+    "@angular/platform-server": "^22.0.5",
+    "@angular/router": "^22.0.5",
+    "@angular/ssr": "^22.0.5",
     "@commitlint/cli": "^19.0.0",
     "@commitlint/config-conventional": "^19.0.0",
     "@eslint/js": "^10.0.1",
@@ -100,10 +103,10 @@
     "prettier": "^3.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
-    "typescript": "^5.6.0",
+    "typescript": "^5.9.0",
     "typescript-eslint": "^8.57.1",
     "vitest": "^2.0.0",
-    "zone.js": "^0.15.0"
+    "zone.js": "^0.16.2"
   },
   "packageManager": "pnpm@10.20.0",
   "engines": {

@@ -53,6 +53,15 @@ export default tseslint.config(
       // TypeScript ESLint Rules
       // ============================================
       '@typescript-eslint/no-explicit-any': 'warn',
+      // Angular 22 deprecates CommonEngine, but supporting it (engineType:
+      // 'common') is a public feature of this library for consumers on the
+      // classic dev-server setup — keep using it until Angular removes it.
+      '@typescript-eslint/no-deprecated': [
+        'error',
+        {
+          allow: [{ from: 'package', package: '@angular/ssr', name: 'CommonEngine' }],
+        },
+      ],
       '@typescript-eslint/explicit-function-return-type': 'off',
       '@typescript-eslint/explicit-module-boundary-types': 'off',
       '@typescript-eslint/no-unused-vars': [

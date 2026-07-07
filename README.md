@@ -44,9 +44,9 @@ yarn add @lexmata/nestjs-angular-ssr
 
 ## Prerequisites
 
-- Node.js >= 20.0.0
+- Node.js >= 20.0.0 (Angular 22 itself requires Node >= 22)
 - NestJS >= 11.0.0 (Express 5 / path-to-regexp v8)
-- Angular >= 19.0.0 with SSR configured
+- Angular >= 19.0.0 with SSR configured (tested against Angular 19-22)
 
 ## Usage
 
@@ -587,7 +587,7 @@ nestjs-angular-ssr/
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── ISSUE_TEMPLATE/                   # Bug report + feature request templates
 │   └── workflows/
-│       ├── ci.yml                        # Lint, typecheck, test (Node 20/22/24), build
+│       ├── ci.yml                        # Lint, typecheck, test (Angular 19-22 x Node 20/22/24), build
 │       └── release.yml                   # Publish to npm + GitHub Packages on release
 ├── package.json
 ├── tsconfig.json

@@ -5,15 +5,16 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     pool: 'forks',
-    include: ['lib/**/*.spec.ts'],
+    include: ['lib/**/*.spec.ts', 'schematics/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
-      include: ['lib/**/*.ts'],
+      include: ['lib/**/*.ts', 'schematics/**/*.ts'],
       exclude: [
         'lib/**/*.spec.ts',
         'lib/**/index.ts',
         'lib/interfaces/**',
+        'schematics/**/*.spec.ts',
       ],
       thresholds: {
         lines: 90,

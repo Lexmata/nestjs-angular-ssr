@@ -23,6 +23,11 @@ const PEER_DEPENDENCIES: Record<string, string> = {
 
 export function ngAdd(options: NgAddOptions): Rule {
   return (tree: Tree, context: SchematicContext) => {
+    // Note: We detect user-supplied options by comparing against hardcoded defaults.
+    // The schematics engine fills in schema defaults before the Rule runs, so we
+    // cannot distinguish "user typed the default value" from "user accepted the prompt
+    // default" when they happen to match. This is an inherent limitation of the
+    // Angular schematics model and is accepted.
     const modulePath = normalizePath(
       options.module && options.module !== DEFAULT_MODULE ? options.module : resolveModuleDefault(tree),
     );

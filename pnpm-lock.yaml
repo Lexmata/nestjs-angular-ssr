@@ -119,9 +119,6 @@ importers:
       rxjs:
         specifier: ^7.8.0
         version: 7.8.2
-      testing:
-        specifier: link:@angular-devkit/schematics/testing
-        version: link:@angular-devkit/schematics/testing
       tsx:
         specifier: ^4.23.1
         version: 4.23.1

@@ -57,10 +57,49 @@ All three get an `x-prompt` so both `ng add` (interactive by default) and
 silently taking defaults, unless flags are passed non-interactively (e.g. in
 CI): `ng add @lexmata/nestjs-angular-ssr --module apps/api/src/app.module.ts`.
 
+The schema defaults above (`src/app/app.module.ts`, `dist/browser`,
+`dist/server/server.mjs`) are the fallback for a bare Nest project with
+neither `angular.json` nor `nest-cli.json` conventions to read. See
+**Project detection** below for how the Rule upgrades these before they're
+used, so the schematic works whether it's run inside a pure Angular
+workspace, a pure Nest project, or a combined layout with both config files.
+
+## Project detection
+
+The consumer's repo shape varies — this package is used both from Nest-only
+projects (like `example/`) and from combined Nest+Angular workspaces. The
+Rule resolves smarter defaults _before_ falling back to the static schema
+defaults, so the interactive prompts show a value that's actually right for
+this project rather than a generic guess:
+
+- **`module` default.** If `nest-cli.json` exists in the tree, read its
+  `sourceRoot` (default `'src'`) and check, in order,
+  `${sourceRoot}/app.module.ts` and `${sourceRoot}/app/app.module.ts` for
+  which one exists. Use whichever is found in place of the schema default.
+  If `nest-cli.json` is absent, keep the schema default
+  (`src/app/app.module.ts`).
+- **`browserDistFolder` / `serverBundle` defaults.** If `angular.json`
+  exists, read the default project (`defaultProject`, or the first key in
+  `projects` if unset) and its `architect.build.options.outputPath`.
+  Normalize both the legacy string form and the Angular 18+ application
+  builder's `{ base: string }` form to a single path string. Derive
+  `browserDistFolder = ${outputPath}/browser` and
+  `serverBundle = ${outputPath}/server/server.mjs`. If `angular.json` is
+  absent, or no project/outputPath can be resolved, keep the schema
+  defaults.
+- A computed default only overrides the _schema's static default_ — an
+  explicit `--module`/`--browserDistFolder`/`--serverBundle` flag from the
+  user always wins, and detection never overrides a value the user actually
+  typed at the prompt.
+- Both detections run independently, so a workspace with both
+  `nest-cli.json` and `angular.json` at the root gets both upgrades; a
+  workspace with only one config file gets only the matching upgrade.
+
 ## Rule behavior (`schematics/ng-add/index.ts`)
 
-1. **Resolve target module file.** If `options.module` doesn't exist in the
-   tree, throw `SchematicsException` with a message telling the user to pass
+1. **Resolve target module file.** Compute the effective `module` path per
+   **Project detection** above. If it still doesn't exist in the tree,
+   throw `SchematicsException` with a message telling the user to pass
    `--module <path>`.
 2. **Generate config file.** Emit `<dirname(module)>/../angular-ssr.config.ts`
    (i.e. alongside the app root, not nested under the module's own folder)
@@ -138,6 +177,17 @@ repo):
   - Missing peer deps appended to `package.json`.
   - Running twice doesn't duplicate the import/forRoot entry.
   - Missing `--module` target throws `SchematicsException`.
+- Project-detection matrix — run the same schematic against four seeded
+  trees to confirm each shape resolves correctly with no options passed:
+  - Bare Nest project (no `angular.json`/`nest-cli.json`) → static schema
+    defaults used.
+  - Nest-only (`nest-cli.json` with a non-default `sourceRoot`) → `module`
+    default resolved from it, dist paths stay static.
+  - Angular-only (`angular.json` with a project `outputPath`) →
+    `browserDistFolder`/`serverBundle` resolved from it, `module` stays
+    static.
+  - Combined workspace (both config files present) → all three resolved
+    from their respective sources.
 
 ## README changes
 

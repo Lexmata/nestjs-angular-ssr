@@ -59,7 +59,7 @@ This will:
 - Prompt for the Angular server bundle path used for `bootstrap()` (same detection, default `dist/server/server.mjs`).
 - Generate `angular-ssr.config.ts` next to your app root, exporting an `angularSsrOptions` object.
 - Add `AngularSSRModule.forRoot(angularSsrOptions)` to your module's `imports` array.
-- Install any missing peer dependencies.
+- Install any missing required peer dependencies (optional peers such as `zone.js` and `@nestjs/cache-manager` are left to you).
 
 Non-interactive (e.g. CI):
 

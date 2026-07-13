@@ -14,12 +14,14 @@ const DEFAULT_MODULE = 'src/app/app.module.ts';
 const DEFAULT_BROWSER_DIST_FOLDER = 'dist/browser';
 const DEFAULT_SERVER_BUNDLE = 'dist/server/server.mjs';
 
+// zone.js is intentionally absent: it's an optional peer (zoneless apps don't
+// need it), same rationale as @nestjs/cache-manager. Consumers using zone-based
+// change detection install it themselves.
 const PEER_DEPENDENCIES: Record<string, string> = {
   '@angular/core': '>=19.0.0',
   '@angular/platform-server': '>=19.0.0',
   '@angular/ssr': '>=19.0.0',
   express: '>=4.18.0',
-  'zone.js': '>=0.15.0',
 };
 
 export function ngAdd(options: NgAddOptions): Rule {

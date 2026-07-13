@@ -19,6 +19,7 @@ const PEER_DEPENDENCIES: Record<string, string> = {
   '@angular/platform-server': '>=19.0.0',
   '@angular/ssr': '>=19.0.0',
   express: '>=4.18.0',
+  'zone.js': '>=0.15.0',
 };
 
 export function ngAdd(options: NgAddOptions): Rule {
@@ -31,8 +32,9 @@ export function ngAdd(options: NgAddOptions): Rule {
     const modulePath = normalizePath(
       options.module && options.module !== DEFAULT_MODULE
         ? options.module
-        : resolveModuleDefault(tree),
+        : resolveModuleDefault(tree, context),
     );
+    assertNoTraversal(modulePath);
 
     if (!tree.exists(modulePath)) {
       throw new SchematicsException(
@@ -40,7 +42,7 @@ export function ngAdd(options: NgAddOptions): Rule {
       );
     }
 
-    const angularDefaults = resolveAngularDefaults(tree);
+    const angularDefaults = resolveAngularDefaults(tree, context);
     const browserDistFolder =
       options.browserDistFolder && options.browserDistFolder !== DEFAULT_BROWSER_DIST_FOLDER
         ? options.browserDistFolder
@@ -50,9 +52,15 @@ export function ngAdd(options: NgAddOptions): Rule {
         ? options.serverBundle
         : angularDefaults.serverBundle;
 
+    // Config is placed one directory above the module's own directory (its
+    // "grandparent"), matching <sourceRoot>/app/*.module.ts and
+    // <sourceRoot>/*.module.ts conventions. A module nested more shallowly
+    // than that will get its config placed higher up (e.g. at the tree
+    // root) — this is a known, accepted trade-off, not a bug.
     const moduleDir = posix.dirname(modulePath);
     const configDir = posix.dirname(moduleDir);
     const configPath = posix.join(configDir, 'angular-ssr.config.ts');
+    assertNoTraversal(configPath);
 
     if (!tree.exists(configPath)) {
       tree.create(configPath, buildConfigFileContent(browserDistFolder, serverBundle));
@@ -70,23 +78,41 @@ function normalizePath(path: string): string {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
-function readJsonFile(tree: Tree, path: string): Record<string, unknown> | null {
-  const buffer = tree.read(path);
-  if (!buffer) {
-    return null;
-  }
-  try {
-    return JSON.parse(buffer.toString('utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
+function assertNoTraversal(path: string): void {
+  if (path.split('/').includes('..')) {
+    throw new SchematicsException(`Path "${path}" must not contain ".." segments.`);
   }
 }
 
-function resolveModuleDefault(tree: Tree): string {
-  const nestCli = readJsonFile(tree, '/nest-cli.json');
-  if (!nestCli) {
+type JsonReadResult =
+  | { status: 'ok'; value: Record<string, unknown> }
+  | { status: 'missing' }
+  | { status: 'malformed'; error: Error };
+
+function readJsonFileResult(tree: Tree, path: string): JsonReadResult {
+  const buffer = tree.read(path);
+  if (!buffer) {
+    return { status: 'missing' };
+  }
+  try {
+    return { status: 'ok', value: JSON.parse(buffer.toString('utf8')) as Record<string, unknown> };
+  } catch (error) {
+    return { status: 'malformed', error: error as Error };
+  }
+}
+
+function resolveModuleDefault(tree: Tree, context: SchematicContext): string {
+  const result = readJsonFileResult(tree, '/nest-cli.json');
+  if (result.status === 'missing') {
     return DEFAULT_MODULE;
   }
+  if (result.status === 'malformed') {
+    context.logger.warn(
+      `Could not parse "/nest-cli.json": ${result.error.message}. Falling back to default module resolution; override with --module if needed.`,
+    );
+    return DEFAULT_MODULE;
+  }
+  const nestCli = result.value;
   const sourceRoot = typeof nestCli.sourceRoot === 'string' ? nestCli.sourceRoot : 'src';
   const candidates = [`${sourceRoot}/app.module.ts`, `${sourceRoot}/app/app.module.ts`];
   for (const candidate of candidates) {
@@ -111,13 +137,26 @@ function normalizeOutputPath(outputPath: unknown): string | null {
   return null;
 }
 
-function resolveAngularDefaults(tree: Tree): { browserDistFolder: string; serverBundle: string } {
+function resolveAngularDefaults(
+  tree: Tree,
+  context: SchematicContext,
+): { browserDistFolder: string; serverBundle: string } {
   const fallback = {
     browserDistFolder: DEFAULT_BROWSER_DIST_FOLDER,
     serverBundle: DEFAULT_SERVER_BUNDLE,
   };
-  const angularJson = readJsonFile(tree, '/angular.json');
-  if (!angularJson || typeof angularJson.projects !== 'object' || angularJson.projects === null) {
+  const result = readJsonFileResult(tree, '/angular.json');
+  if (result.status === 'missing') {
+    return fallback;
+  }
+  if (result.status === 'malformed') {
+    context.logger.warn(
+      `Could not parse "/angular.json": ${result.error.message}. Falling back to default browserDistFolder/serverBundle; override with --browser-dist-folder/--server-bundle if needed.`,
+    );
+    return fallback;
+  }
+  const angularJson = result.value;
+  if (typeof angularJson.projects !== 'object' || angularJson.projects === null) {
     return fallback;
   }
   const projects = angularJson.projects as Record<string, unknown>;
@@ -147,9 +186,9 @@ import { pathToFileURL } from 'node:url';
 import type { AngularSSRModuleOptions } from '@lexmata/nestjs-angular-ssr';
 
 export const angularSsrOptions: AngularSSRModuleOptions = {
-  browserDistFolder: join(process.cwd(), '${browserDistFolder}'),
+  browserDistFolder: join(process.cwd(), ${JSON.stringify(browserDistFolder)}),
   bootstrap: async () => {
-    const { default: angularApp } = await import(pathToFileURL(join(process.cwd(), '${serverBundle}')).href);
+    const { default: angularApp } = await import(pathToFileURL(join(process.cwd(), ${JSON.stringify(serverBundle)})).href);
     return angularApp;
   },
 };
@@ -187,20 +226,28 @@ function findNestModuleDecoratorObject(
   throw new SchematicsException(`Could not find a @Module({...}) decorator in "${modulePath}".`);
 }
 
-function findImportsArrayLiteral(
+function findImportsProperty(
   objectLiteral: ts.ObjectLiteralExpression,
-): ts.ArrayLiteralExpression | null {
+): ts.PropertyAssignment | null {
   for (const property of objectLiteral.properties) {
     if (
       ts.isPropertyAssignment(property) &&
       ts.isIdentifier(property.name) &&
-      property.name.text === 'imports' &&
-      ts.isArrayLiteralExpression(property.initializer)
+      property.name.text === 'imports'
     ) {
-      return property.initializer;
+      return property;
     }
   }
   return null;
+}
+
+function findImportsArrayLiteral(
+  objectLiteral: ts.ObjectLiteralExpression,
+): ts.ArrayLiteralExpression | null {
+  const property = findImportsProperty(objectLiteral);
+  return property && ts.isArrayLiteralExpression(property.initializer)
+    ? property.initializer
+    : null;
 }
 
 function wireModuleImport(tree: Tree, modulePath: string, configPath: string): void {
@@ -215,7 +262,13 @@ function wireModuleImport(tree: Tree, modulePath: string, configPath: string): v
 
   const source = ts.createSourceFile(modulePath, content, ts.ScriptTarget.Latest, true);
   const decoratorObject = findNestModuleDecoratorObject(source, modulePath);
+  const importsProperty = findImportsProperty(decoratorObject);
   const importsArray = findImportsArrayLiteral(decoratorObject);
+  if (importsProperty && !importsArray) {
+    throw new SchematicsException(
+      `Could not auto-wire AngularSSRModule: the "imports" property in "${modulePath}" is not an array literal. Add \`AngularSSRModule.forRoot(angularSsrOptions)\` to it manually.`,
+    );
+  }
   const importSpecifier = toImportSpecifier(modulePath, configPath);
 
   const recorder = tree.beginUpdate(modulePath);
@@ -254,10 +307,16 @@ function wireModuleImport(tree: Tree, modulePath: string, configPath: string): v
 }
 
 function addMissingPeerDependencies(tree: Tree): boolean {
-  const pkg = readJsonFile(tree, '/package.json');
-  if (!pkg) {
+  const result = readJsonFileResult(tree, '/package.json');
+  if (result.status === 'missing') {
     return false;
   }
+  if (result.status === 'malformed') {
+    throw new SchematicsException(
+      `Could not parse "/package.json": ${result.error.message}. Fix the JSON syntax and re-run ng add.`,
+    );
+  }
+  const pkg = result.value;
   const dependencies = { ...(pkg.dependencies as Record<string, string> | undefined) };
   const devDependencies = (pkg.devDependencies as Record<string, string> | undefined) ?? {};
   let changed = false;

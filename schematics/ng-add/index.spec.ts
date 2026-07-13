@@ -15,25 +15,55 @@ const BASE_MODULE = `import { Module } from '@nestjs/common';
 export class AppModule {}
 `;
 
-function bareNestProject(): UnitTestTree {
+const MODULE_WITH_EXISTING_IMPORTS = `import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [ConfigModule],
+})
+export class AppModule {}
+`;
+
+const MODULE_WITHOUT_IMPORTS = `import { Module } from '@nestjs/common';
+
+@Module({
+  controllers: [],
+})
+export class AppModule {}
+`;
+
+const APP_MODULE_PATH = '/src/app/app.module.ts';
+const PACKAGE_JSON_PATH = '/package.json';
+const CONFIG_PATH = '/src/angular-ssr.config.ts';
+const NEST_CLI_PATH = '/nest-cli.json';
+const NESTED_SOURCE_ROOT = 'apps/api/src';
+const NEST_CLI_WITH_NESTED_SOURCE_ROOT = JSON.stringify({ sourceRoot: NESTED_SOURCE_ROOT });
+const NESTED_MODULE_PATH = '/apps/api/src/app.module.ts';
+const NESTED_APP_SUBDIR_MODULE_PATH = '/apps/api/src/app/app.module.ts';
+const NESTED_CONFIG_PATH = '/apps/api/angular-ssr.config.ts';
+const ANGULAR_JSON_PATH = '/angular.json';
+const DIST_DEMO_BROWSER_ASSERTION = "join(process.cwd(), 'dist/demo/browser')";
+const PACKAGE_JSON_CONTENT = JSON.stringify({ name: 'consumer', version: '1.0.0' }, null, 2);
+
+function bareNestProject(moduleContent: string = BASE_MODULE): UnitTestTree {
   const tree = new UnitTestTree(Tree.empty());
-  tree.create('/src/app/app.module.ts', BASE_MODULE);
-  tree.create('/package.json', JSON.stringify({ name: 'consumer', version: '1.0.0' }, null, 2));
+  tree.create(APP_MODULE_PATH, moduleContent);
+  tree.create(PACKAGE_JSON_PATH, PACKAGE_JSON_CONTENT);
   return tree;
 }
 
 describe('ng-add schematic', () => {
   it('creates the config file with static defaults for a bare Nest project', async () => {
     const tree = await runner.runSchematic('ng-add', {}, bareNestProject());
-    expect(tree.exists('/src/angular-ssr.config.ts')).toBe(true);
-    const config = tree.readContent('/src/angular-ssr.config.ts');
+    expect(tree.exists(CONFIG_PATH)).toBe(true);
+    const config = tree.readContent(CONFIG_PATH);
     expect(config).toContain("join(process.cwd(), 'dist/browser')");
     expect(config).toContain("await import('dist/server/server.mjs')");
   });
 
   it('wires AngularSSRModule into the target module with the correct relative import', async () => {
     const tree = await runner.runSchematic('ng-add', {}, bareNestProject());
-    const moduleContent = tree.readContent('/src/app/app.module.ts');
+    const moduleContent = tree.readContent(APP_MODULE_PATH);
     expect(moduleContent).toContain(
       "import { AngularSSRModule } from '@lexmata/nestjs-angular-ssr';",
     );
@@ -41,9 +71,28 @@ describe('ng-add schematic', () => {
     expect(moduleContent).toContain('imports: [AngularSSRModule.forRoot(angularSsrOptions)],');
   });
 
+  it('appends AngularSSRModule.forRoot(...) after existing imports when the imports array is non-empty', async () => {
+    const tree = await runner.runSchematic(
+      'ng-add',
+      {},
+      bareNestProject(MODULE_WITH_EXISTING_IMPORTS),
+    );
+    const moduleContent = tree.readContent(APP_MODULE_PATH);
+    expect(moduleContent).toContain('ConfigModule');
+    expect(moduleContent).toContain(
+      'imports: [ConfigModule, AngularSSRModule.forRoot(angularSsrOptions)]',
+    );
+  });
+
+  it('inserts a fresh imports array when the @Module({...}) decorator has no imports property', async () => {
+    const tree = await runner.runSchematic('ng-add', {}, bareNestProject(MODULE_WITHOUT_IMPORTS));
+    const moduleContent = tree.readContent(APP_MODULE_PATH);
+    expect(moduleContent).toContain('imports: [AngularSSRModule.forRoot(angularSsrOptions)],');
+  });
+
   it('adds missing peer dependencies to package.json', async () => {
     const tree = await runner.runSchematic('ng-add', {}, bareNestProject());
-    const pkg = JSON.parse(tree.readContent('/package.json')) as {
+    const pkg = JSON.parse(tree.readContent(PACKAGE_JSON_PATH)) as {
       dependencies: Record<string, string>;
     };
     expect(pkg.dependencies['@angular/core']).toBe('>=19.0.0');
@@ -56,14 +105,14 @@ describe('ng-add schematic', () => {
   it('does not duplicate the import/forRoot call on a second run', async () => {
     const first = await runner.runSchematic('ng-add', {}, bareNestProject());
     const second = await runner.runSchematic('ng-add', {}, first);
-    const moduleContent = second.readContent('/src/app/app.module.ts');
+    const moduleContent = second.readContent(APP_MODULE_PATH);
     const occurrences = moduleContent.split('AngularSSRModule.forRoot').length - 1;
     expect(occurrences).toBe(1);
   });
 
   it('throws a clear error when the target module does not exist', async () => {
     const tree = new UnitTestTree(Tree.empty());
-    tree.create('/package.json', '{}');
+    tree.create(PACKAGE_JSON_PATH, '{}');
     await expect(runner.runSchematic('ng-add', {}, tree)).rejects.toThrow(
       /Could not find a NestJS module/,
     );
@@ -71,20 +120,20 @@ describe('ng-add schematic', () => {
 
   it('resolves the module default from nest-cli.json sourceRoot', async () => {
     const tree = new UnitTestTree(Tree.empty());
-    tree.create('/nest-cli.json', JSON.stringify({ sourceRoot: 'apps/api/src' }));
-    tree.create('/apps/api/src/app.module.ts', BASE_MODULE);
-    tree.create('/package.json', JSON.stringify({ name: 'consumer', version: '1.0.0' }, null, 2));
+    tree.create(NEST_CLI_PATH, NEST_CLI_WITH_NESTED_SOURCE_ROOT);
+    tree.create(NESTED_MODULE_PATH, BASE_MODULE);
+    tree.create(PACKAGE_JSON_PATH, PACKAGE_JSON_CONTENT);
 
     const result = await runner.runSchematic('ng-add', {}, tree);
-    expect(result.exists('/apps/api/angular-ssr.config.ts')).toBe(true);
-    const moduleContent = result.readContent('/apps/api/src/app.module.ts');
+    expect(result.exists(NESTED_CONFIG_PATH)).toBe(true);
+    const moduleContent = result.readContent(NESTED_MODULE_PATH);
     expect(moduleContent).toContain("from '../angular-ssr.config'");
   });
 
   it('resolves browserDistFolder/serverBundle from angular.json (string outputPath)', async () => {
     const tree = bareNestProject();
     tree.create(
-      '/angular.json',
+      ANGULAR_JSON_PATH,
       JSON.stringify({
         defaultProject: 'demo',
         projects: { demo: { architect: { build: { options: { outputPath: 'dist/demo' } } } } },
@@ -92,15 +141,15 @@ describe('ng-add schematic', () => {
     );
 
     const result = await runner.runSchematic('ng-add', {}, tree);
-    const config = result.readContent('/src/angular-ssr.config.ts');
-    expect(config).toContain("join(process.cwd(), 'dist/demo/browser')");
+    const config = result.readContent(CONFIG_PATH);
+    expect(config).toContain(DIST_DEMO_BROWSER_ASSERTION);
     expect(config).toContain("await import('dist/demo/server/server.mjs')");
   });
 
   it('resolves browserDistFolder/serverBundle from angular.json ({ base } outputPath form)', async () => {
     const tree = bareNestProject();
     tree.create(
-      '/angular.json',
+      ANGULAR_JSON_PATH,
       JSON.stringify({
         defaultProject: 'demo',
         projects: {
@@ -110,17 +159,38 @@ describe('ng-add schematic', () => {
     );
 
     const result = await runner.runSchematic('ng-add', {}, tree);
-    const config = result.readContent('/src/angular-ssr.config.ts');
-    expect(config).toContain("join(process.cwd(), 'dist/demo/browser')");
+    const config = result.readContent(CONFIG_PATH);
+    expect(config).toContain(DIST_DEMO_BROWSER_ASSERTION);
+  });
+
+  it('falls back to the nested app/app.module.ts candidate when the flat candidate is absent', async () => {
+    const tree = new UnitTestTree(Tree.empty());
+    tree.create(NEST_CLI_PATH, NEST_CLI_WITH_NESTED_SOURCE_ROOT);
+    tree.create(NESTED_APP_SUBDIR_MODULE_PATH, BASE_MODULE);
+    tree.create(PACKAGE_JSON_PATH, PACKAGE_JSON_CONTENT);
+
+    const result = await runner.runSchematic('ng-add', {}, tree);
+    const moduleContent = result.readContent(NESTED_APP_SUBDIR_MODULE_PATH);
+    expect(moduleContent).toContain('AngularSSRModule.forRoot(angularSsrOptions)');
+  });
+
+  it('falls back to Angular defaults when angular.json has no usable projects map', async () => {
+    const tree = bareNestProject();
+    tree.create(ANGULAR_JSON_PATH, JSON.stringify({ defaultProject: 'demo' }));
+
+    const result = await runner.runSchematic('ng-add', {}, tree);
+    const config = result.readContent(CONFIG_PATH);
+    expect(config).toContain("join(process.cwd(), 'dist/browser')");
+    expect(config).toContain("await import('dist/server/server.mjs')");
   });
 
   it('resolves both module and dist defaults when both config files are present', async () => {
     const tree = new UnitTestTree(Tree.empty());
-    tree.create('/nest-cli.json', JSON.stringify({ sourceRoot: 'apps/api/src' }));
-    tree.create('/apps/api/src/app.module.ts', BASE_MODULE);
-    tree.create('/package.json', JSON.stringify({ name: 'consumer', version: '1.0.0' }, null, 2));
+    tree.create(NEST_CLI_PATH, NEST_CLI_WITH_NESTED_SOURCE_ROOT);
+    tree.create(NESTED_MODULE_PATH, BASE_MODULE);
+    tree.create(PACKAGE_JSON_PATH, PACKAGE_JSON_CONTENT);
     tree.create(
-      '/angular.json',
+      ANGULAR_JSON_PATH,
       JSON.stringify({
         defaultProject: 'demo',
         projects: { demo: { architect: { build: { options: { outputPath: 'dist/demo' } } } } },
@@ -128,15 +198,15 @@ describe('ng-add schematic', () => {
     );
 
     const result = await runner.runSchematic('ng-add', {}, tree);
-    expect(result.exists('/apps/api/angular-ssr.config.ts')).toBe(true);
-    const config = result.readContent('/apps/api/angular-ssr.config.ts');
-    expect(config).toContain("join(process.cwd(), 'dist/demo/browser')");
+    expect(result.exists(NESTED_CONFIG_PATH)).toBe(true);
+    const config = result.readContent(NESTED_CONFIG_PATH);
+    expect(config).toContain(DIST_DEMO_BROWSER_ASSERTION);
   });
 
   it('respects an explicit --module flag over any detected default', async () => {
     const tree = new UnitTestTree(Tree.empty());
     tree.create('/src/custom.module.ts', BASE_MODULE);
-    tree.create('/package.json', JSON.stringify({ name: 'consumer', version: '1.0.0' }, null, 2));
+    tree.create(PACKAGE_JSON_PATH, PACKAGE_JSON_CONTENT);
 
     const result = await runner.runSchematic('ng-add', { module: 'src/custom.module.ts' }, tree);
     const moduleContent = result.readContent('/src/custom.module.ts');

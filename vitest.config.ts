@@ -9,11 +9,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
-      include: ['lib/**/*.ts'],
+      include: ['lib/**/*.ts', 'schematics/**/*.ts'],
       exclude: [
         'lib/**/*.spec.ts',
         'lib/**/index.ts',
         'lib/interfaces/**',
+        'schematics/**/*.spec.ts',
       ],
       thresholds: {
         lines: 90,

@@ -42,6 +42,36 @@ npm install @lexmata/nestjs-angular-ssr
 yarn add @lexmata/nestjs-angular-ssr
 ```
 
+## Installation via schematic
+
+Instead of manually importing `AngularSSRModule`, you can scaffold the wiring with the bundled schematic — it works the same way whether you run it through Angular CLI or Nest CLI:
+
+```bash
+ng add @lexmata/nestjs-angular-ssr
+# or
+nest add @lexmata/nestjs-angular-ssr
+```
+
+This will:
+
+- Prompt for the NestJS module to wire into (auto-detected from `nest-cli.json`'s `sourceRoot` when present, default `src/app/app.module.ts`).
+- Prompt for the Angular browser build output path (auto-detected from `angular.json`'s default project `outputPath` when present, default `dist/browser`).
+- Prompt for the Angular server bundle path used for `bootstrap()` (same detection, default `dist/server/server.mjs`).
+- Generate `angular-ssr.config.ts` next to your app root, exporting an `angularSsrOptions` object.
+- Add `AngularSSRModule.forRoot(angularSsrOptions)` to your module's `imports` array.
+- Install any missing peer dependencies.
+
+Non-interactive (e.g. CI):
+
+```bash
+ng add @lexmata/nestjs-angular-ssr \
+  --module apps/api/src/app.module.ts \
+  --browser-dist-folder dist/api/browser \
+  --server-bundle dist/api/server/server.mjs
+```
+
+Running it again on an already-wired module is a no-op for the import — it won't duplicate the `forRoot()` call.
+
 ## Prerequisites
 
 - Node.js >= 20.0.0 (Angular 22 itself requires Node >= 22)

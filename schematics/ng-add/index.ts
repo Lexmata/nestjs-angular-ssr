@@ -1,7 +1,8 @@
-import { SchematicsException, type Rule, type SchematicContext, type Tree } from '@angular-devkit/schematics';
-import { NodePackageInstallTask } from '@angular-devkit/schematics/tasks';
 import { posix } from 'node:path';
+import { SchematicsException } from '@angular-devkit/schematics';
+import { NodePackageInstallTask } from '@angular-devkit/schematics/tasks';
 import * as ts from 'typescript';
+import type { Rule, SchematicContext, Tree } from '@angular-devkit/schematics';
 
 export interface NgAddOptions {
   module?: string;
@@ -29,7 +30,9 @@ export function ngAdd(options: NgAddOptions): Rule {
     // default" when they happen to match. This is an inherent limitation of the
     // Angular schematics model and is accepted.
     const modulePath = normalizePath(
-      options.module && options.module !== DEFAULT_MODULE ? options.module : resolveModuleDefault(tree),
+      options.module && options.module !== DEFAULT_MODULE
+        ? options.module
+        : resolveModuleDefault(tree),
     );
 
     if (!tree.exists(modulePath)) {
@@ -74,7 +77,7 @@ function readJsonFile(tree: Tree, path: string): Record<string, unknown> | null 
     return null;
   }
   try {
-    return JSON.parse(buffer.toString('utf-8')) as Record<string, unknown>;
+    return JSON.parse(buffer.toString('utf8')) as Record<string, unknown>;
   } catch {
     return null;
   }
@@ -110,15 +113,22 @@ function normalizeOutputPath(outputPath: unknown): string | null {
 }
 
 function resolveAngularDefaults(tree: Tree): { browserDistFolder: string; serverBundle: string } {
-  const fallback = { browserDistFolder: DEFAULT_BROWSER_DIST_FOLDER, serverBundle: DEFAULT_SERVER_BUNDLE };
+  const fallback = {
+    browserDistFolder: DEFAULT_BROWSER_DIST_FOLDER,
+    serverBundle: DEFAULT_SERVER_BUNDLE,
+  };
   const angularJson = readJsonFile(tree, '/angular.json');
   if (!angularJson || typeof angularJson.projects !== 'object' || angularJson.projects === null) {
     return fallback;
   }
   const projects = angularJson.projects as Record<string, unknown>;
   const projectName =
-    typeof angularJson.defaultProject === 'string' ? angularJson.defaultProject : Object.keys(projects)[0];
-  const project = projectName ? (projects[projectName] as Record<string, unknown> | undefined) : undefined;
+    typeof angularJson.defaultProject === 'string'
+      ? angularJson.defaultProject
+      : Object.keys(projects)[0];
+  const project = projectName
+    ? (projects[projectName] as Record<string, unknown> | undefined)
+    : undefined;
   const architect = project?.architect as Record<string, unknown> | undefined;
   const build = architect?.build as Record<string, unknown> | undefined;
   const buildOptions = build?.options as Record<string, unknown> | undefined;
@@ -152,7 +162,10 @@ function toImportSpecifier(fromModulePath: string, toConfigPath: string): string
   return rel.startsWith('.') ? rel : `./${rel}`;
 }
 
-function findNestModuleDecoratorObject(source: ts.SourceFile, modulePath: string): ts.ObjectLiteralExpression {
+function findNestModuleDecoratorObject(
+  source: ts.SourceFile,
+  modulePath: string,
+): ts.ObjectLiteralExpression {
   for (const statement of source.statements) {
     if (!ts.isClassDeclaration(statement) || !ts.canHaveDecorators(statement)) {
       continue;
@@ -174,7 +187,9 @@ function findNestModuleDecoratorObject(source: ts.SourceFile, modulePath: string
   throw new SchematicsException(`Could not find a @Module({...}) decorator in "${modulePath}".`);
 }
 
-function findImportsArrayLiteral(objectLiteral: ts.ObjectLiteralExpression): ts.ArrayLiteralExpression | null {
+function findImportsArrayLiteral(
+  objectLiteral: ts.ObjectLiteralExpression,
+): ts.ArrayLiteralExpression | null {
   for (const property of objectLiteral.properties) {
     if (
       ts.isPropertyAssignment(property) &&
@@ -193,7 +208,7 @@ function wireModuleImport(tree: Tree, modulePath: string, configPath: string): v
   if (!buffer) {
     throw new SchematicsException(`Could not read "${modulePath}".`);
   }
-  const content = buffer.toString('utf-8');
+  const content = buffer.toString('utf8');
   if (content.includes('AngularSSRModule')) {
     return;
   }
@@ -215,10 +230,13 @@ function wireModuleImport(tree: Tree, modulePath: string, configPath: string): v
 
   if (importsArray) {
     if (importsArray.elements.length > 0) {
-      const lastElement = importsArray.elements[importsArray.elements.length - 1];
+      const lastElement = importsArray.elements.at(-1);
       recorder.insertRight(lastElement.getEnd(), ', AngularSSRModule.forRoot(angularSsrOptions)');
     } else {
-      recorder.insertRight(importsArray.getStart() + 1, 'AngularSSRModule.forRoot(angularSsrOptions)');
+      recorder.insertRight(
+        importsArray.getStart() + 1,
+        'AngularSSRModule.forRoot(angularSsrOptions)',
+      );
     }
   } else {
     recorder.insertRight(
@@ -247,7 +265,7 @@ function addMissingPeerDependencies(tree: Tree): boolean {
   }
   if (changed) {
     pkg.dependencies = dependencies;
-    tree.overwrite('/package.json', JSON.stringify(pkg, null, 2) + '\n');
+    tree.overwrite('/package.json', `${JSON.stringify(pkg, null, 2)}\n`);
   }
   return changed;
 }

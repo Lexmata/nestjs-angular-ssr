@@ -4,6 +4,8 @@
 
 # Source files (dist is what we publish)
 lib/
+schematics/
+tsconfig.schematics.json
 
 # Tests
 **/*.spec.ts

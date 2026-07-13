@@ -34,14 +34,18 @@ describe('ng-add schematic', () => {
   it('wires AngularSSRModule into the target module with the correct relative import', async () => {
     const tree = await runner.runSchematic('ng-add', {}, bareNestProject());
     const moduleContent = tree.readContent('/src/app/app.module.ts');
-    expect(moduleContent).toContain("import { AngularSSRModule } from '@lexmata/nestjs-angular-ssr';");
+    expect(moduleContent).toContain(
+      "import { AngularSSRModule } from '@lexmata/nestjs-angular-ssr';",
+    );
     expect(moduleContent).toContain("import { angularSsrOptions } from '../angular-ssr.config';");
-    expect(moduleContent).toMatch(/imports:\s*\[\s*AngularSSRModule\.forRoot\(angularSsrOptions\)\s*\]/);
+    expect(moduleContent).toContain('imports: [AngularSSRModule.forRoot(angularSsrOptions)],');
   });
 
   it('adds missing peer dependencies to package.json', async () => {
     const tree = await runner.runSchematic('ng-add', {}, bareNestProject());
-    const pkg = JSON.parse(tree.readContent('/package.json')) as { dependencies: Record<string, string> };
+    const pkg = JSON.parse(tree.readContent('/package.json')) as {
+      dependencies: Record<string, string>;
+    };
     expect(pkg.dependencies['@angular/core']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/platform-server']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/ssr']).toBe('>=19.0.0');
@@ -60,7 +64,9 @@ describe('ng-add schematic', () => {
   it('throws a clear error when the target module does not exist', async () => {
     const tree = new UnitTestTree(Tree.empty());
     tree.create('/package.json', '{}');
-    await expect(runner.runSchematic('ng-add', {}, tree)).rejects.toThrow(/Could not find a NestJS module/);
+    await expect(runner.runSchematic('ng-add', {}, tree)).rejects.toThrow(
+      /Could not find a NestJS module/,
+    );
   });
 
   it('resolves the module default from nest-cli.json sourceRoot', async () => {
@@ -97,7 +103,9 @@ describe('ng-add schematic', () => {
       '/angular.json',
       JSON.stringify({
         defaultProject: 'demo',
-        projects: { demo: { architect: { build: { options: { outputPath: { base: 'dist/demo' } } } } } },
+        projects: {
+          demo: { architect: { build: { options: { outputPath: { base: 'dist/demo' } } } } },
+        },
       }),
     );
 

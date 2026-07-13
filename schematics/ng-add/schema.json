@@ -1,0 +1,25 @@
+{
+  "$id": "LexmataNestjsAngularSsrNgAdd",
+  "title": "@lexmata/nestjs-angular-ssr ng-add schematic",
+  "type": "object",
+  "properties": {
+    "module": {
+      "type": "string",
+      "description": "Path (relative to the project root) to the NestJS module AngularSSRModule should be wired into.",
+      "default": "src/app/app.module.ts",
+      "x-prompt": "Which NestJS module should AngularSSRModule be wired into?"
+    },
+    "browserDistFolder": {
+      "type": "string",
+      "description": "Path (relative to the project root) to the Angular browser build output.",
+      "default": "dist/browser",
+      "x-prompt": "Path to the Angular browser build output?"
+    },
+    "serverBundle": {
+      "type": "string",
+      "description": "Path (relative to the project root) to the Angular server bundle (server.mjs) used for bootstrap().",
+      "default": "dist/server/server.mjs",
+      "x-prompt": "Path to the Angular server bundle (server.mjs) for bootstrap()?"
+    }
+  }
+}

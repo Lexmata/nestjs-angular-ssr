@@ -1,29 +1,31 @@
 {
   "name": "@lexmata/nestjs-angular-ssr",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Angular SSR (v19+) module for NestJS framework",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
   "types": "dist/cjs/index.d.ts",
+  "schematics": "./dist/schematics/collection.json",
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "pnpm run build:cjs && pnpm run build:esm && pnpm run build:fix-esm && pnpm run build:markers",
+    "build": "pnpm run build:cjs && pnpm run build:esm && pnpm run build:fix-esm && pnpm run build:markers && pnpm run build:schematics",
     "build:cjs": "tsc -p tsconfig.cjs.json",
     "build:esm": "tsc -p tsconfig.esm.json",
     "build:fix-esm": "node scripts/fix-esm-extensions.mjs",
     "build:markers": "node scripts/emit-package-json.mjs",
+    "build:schematics": "tsc -p tsconfig.schematics.json && node scripts/copy-schematics-assets.mjs",
     "build:watch": "tsc -p tsconfig.cjs.json --watch",
     "clean": "rm -rf dist",
     "prepublishOnly": "pnpm run clean && pnpm run build",
     "test": "vitest run",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest run --coverage",
-    "lint": "eslint \"lib/**/*.ts\"",
-    "lint:fix": "eslint \"lib/**/*.ts\" --fix",
-    "format": "prettier --write \"lib/**/*.ts\"",
-    "format:check": "prettier --check \"lib/**/*.ts\"",
+    "lint": "eslint \"lib/**/*.ts\" \"schematics/**/*.ts\"",
+    "lint:fix": "eslint \"lib/**/*.ts\" \"schematics/**/*.ts\" --fix",
+    "format": "prettier --write \"lib/**/*.ts\" \"schematics/**/*.ts\"",
+    "format:check": "prettier --check \"lib/**/*.ts\" \"schematics/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "prepare": "husky"
   },
@@ -66,6 +68,10 @@
       "optional": true
     }
   },
+  "dependencies": {
+    "@angular-devkit/schematics": ">=19.0.0 <23.0.0",
+    "typescript": ">=4.8.0 <6.0.0"
+  },
   "devDependencies": {
     "@angular/common": "^22.0.5",
     "@angular/compiler": "^22.0.5",
@@ -103,7 +109,7 @@
     "prettier": "^3.0.0",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.0",
-    "typescript": "^5.9.0",
+    "tsx": "^4.23.1",
     "typescript-eslint": "^8.57.1",
     "vitest": "^2.0.0",
     "zone.js": "^0.16.2"
@@ -128,7 +134,7 @@
     }
   },
   "lint-staged": {
-    "lib/**/*.ts": [
+    "{lib,schematics}/**/*.ts": [
       "eslint --fix",
       "prettier --write"
     ],

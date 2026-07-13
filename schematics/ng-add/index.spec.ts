@@ -124,7 +124,7 @@ describe('ng-add schematic', () => {
     expect(pkg.dependencies['@angular/platform-server']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/ssr']).toBe('>=19.0.0');
     expect(pkg.dependencies.express).toBe('>=4.18.0');
-    expect(pkg.dependencies['zone.js']).toBe('>=0.15.0');
+    expect(pkg.dependencies['zone.js']).toBeUndefined();
   });
 
   it('does not duplicate the import/forRoot call on a second run', async () => {
@@ -341,7 +341,7 @@ describe('ng-add schematic', () => {
     expect(pkg.dependencies['@angular/core']).toBe('^19.1.0');
     expect(pkg.dependencies['@angular/platform-server']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/ssr']).toBe('>=19.0.0');
-    expect(pkg.dependencies['zone.js']).toBe('>=0.15.0');
+    expect(pkg.dependencies['zone.js']).toBeUndefined();
   });
 
   it('resolves the default project via Object.keys(projects)[0] when angular.json has no defaultProject', async () => {

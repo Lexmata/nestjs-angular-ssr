@@ -1,6 +1,6 @@
 {
   "name": "@lexmata/nestjs-angular-ssr",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Angular SSR (v19+) module for NestJS framework",
   "main": "dist/cjs/index.js",
   "module": "dist/esm/index.js",
@@ -65,6 +65,9 @@
       "optional": true
     },
     "cache-manager": {
+      "optional": true
+    },
+    "zone.js": {
       "optional": true
     }
   },

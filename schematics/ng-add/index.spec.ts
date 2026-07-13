@@ -58,7 +58,9 @@ describe('ng-add schematic', () => {
     expect(tree.exists(CONFIG_PATH)).toBe(true);
     const config = tree.readContent(CONFIG_PATH);
     expect(config).toContain("join(process.cwd(), 'dist/browser')");
-    expect(config).toContain("await import('dist/server/server.mjs')");
+    expect(config).toContain(
+      "await import(pathToFileURL(join(process.cwd(), 'dist/server/server.mjs')).href)",
+    );
   });
 
   it('wires AngularSSRModule into the target module with the correct relative import', async () => {
@@ -98,7 +100,6 @@ describe('ng-add schematic', () => {
     expect(pkg.dependencies['@angular/core']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/platform-server']).toBe('>=19.0.0');
     expect(pkg.dependencies['@angular/ssr']).toBe('>=19.0.0');
-    expect(pkg.dependencies['@nestjs/cache-manager']).toBe('>=3.0.0');
     expect(pkg.dependencies.express).toBe('>=4.18.0');
   });
 
@@ -143,7 +144,9 @@ describe('ng-add schematic', () => {
     const result = await runner.runSchematic('ng-add', {}, tree);
     const config = result.readContent(CONFIG_PATH);
     expect(config).toContain(DIST_DEMO_BROWSER_ASSERTION);
-    expect(config).toContain("await import('dist/demo/server/server.mjs')");
+    expect(config).toContain(
+      "await import(pathToFileURL(join(process.cwd(), 'dist/demo/server/server.mjs')).href)",
+    );
   });
 
   it('resolves browserDistFolder/serverBundle from angular.json ({ base } outputPath form)', async () => {
@@ -181,7 +184,9 @@ describe('ng-add schematic', () => {
     const result = await runner.runSchematic('ng-add', {}, tree);
     const config = result.readContent(CONFIG_PATH);
     expect(config).toContain("join(process.cwd(), 'dist/browser')");
-    expect(config).toContain("await import('dist/server/server.mjs')");
+    expect(config).toContain(
+      "await import(pathToFileURL(join(process.cwd(), 'dist/server/server.mjs')).href)",
+    );
   });
 
   it('resolves both module and dist defaults when both config files are present', async () => {

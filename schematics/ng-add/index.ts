@@ -18,7 +18,6 @@ const PEER_DEPENDENCIES: Record<string, string> = {
   '@angular/core': '>=19.0.0',
   '@angular/platform-server': '>=19.0.0',
   '@angular/ssr': '>=19.0.0',
-  '@nestjs/cache-manager': '>=3.0.0',
   express: '>=4.18.0',
 };
 
@@ -144,12 +143,13 @@ function resolveAngularDefaults(tree: Tree): { browserDistFolder: string; server
 
 function buildConfigFileContent(browserDistFolder: string, serverBundle: string): string {
   return `import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import type { AngularSSRModuleOptions } from '@lexmata/nestjs-angular-ssr';
 
 export const angularSsrOptions: AngularSSRModuleOptions = {
   browserDistFolder: join(process.cwd(), '${browserDistFolder}'),
   bootstrap: async () => {
-    const { default: angularApp } = await import('${serverBundle}');
+    const { default: angularApp } = await import(pathToFileURL(join(process.cwd(), '${serverBundle}')).href);
     return angularApp;
   },
 };

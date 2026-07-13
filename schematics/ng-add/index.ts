@@ -230,7 +230,12 @@ function wireModuleImport(tree: Tree, modulePath: string, configPath: string): v
 
   if (importsArray) {
     if (importsArray.elements.length > 0) {
-      const lastElement = importsArray.elements.at(-1);
+      // Indexed access (not `.at()`) intentionally: `Array.prototype.at()` always
+      // types as `T | undefined` under this repo's `strict` tsconfig, which would
+      // force an unnecessary undefined-check here even though the surrounding
+      // `length > 0` guard already ensures this element exists.
+      // eslint-disable-next-line unicorn/prefer-at
+      const lastElement = importsArray.elements[importsArray.elements.length - 1];
       recorder.insertRight(lastElement.getEnd(), ', AngularSSRModule.forRoot(angularSsrOptions)');
     } else {
       recorder.insertRight(

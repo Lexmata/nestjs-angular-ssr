@@ -388,3 +388,78 @@ describe('AngularSSRModule (consumer-shape reproduction)', () => {
     expect(await res.text()).toBe('PNG-DATA');
   });
 });
+
+/**
+ * The whole point of LBP-28: a status set by the render has to survive all the
+ * way onto the wire. Unit tests assert `res.statusCode` is written; only a real
+ * HTTP round trip proves nothing downstream flattens it back to 200.
+ */
+const buildStatusEngine = (
+  status: number,
+  headers: Record<string, string> = {},
+): AngularAppEngine => {
+  const engine = Object.create(AngularAppEngine.prototype) as AngularAppEngine & {
+    handle: ReturnType<typeof vi.fn>;
+  };
+  engine.handle = vi
+    .fn()
+    .mockResolvedValue(new Response('<html><body>not found</body></html>', { status, headers }));
+  return engine;
+};
+
+@Module({
+  imports: [
+    AngularSSRModule.forRoot({
+      browserDistFolder: '/tmp/never-read-during-tests',
+      bootstrap: () => Promise.resolve(buildStatusEngine(404, { 'X-Render-Note': 'gone' })),
+    }),
+  ],
+})
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class -- token class for Nest module decorator
+class E2ENotFoundModule {}
+
+@Module({
+  imports: [
+    AngularSSRModule.forRoot({
+      browserDistFolder: '/tmp/never-read-during-tests',
+      bootstrap: () => Promise.resolve(buildStatusEngine(301, { Location: '/' })),
+    }),
+  ],
+})
+// eslint-disable-next-line @typescript-eslint/no-extraneous-class -- token class for Nest module decorator
+class E2ERedirectModule {}
+
+describe('AngularSSRModule (response status propagation)', () => {
+  const listen = async (moduleClass: unknown): Promise<[INestApplication, string]> => {
+    const app = await NestFactory.create(moduleClass as never, { logger: ['error', 'warn'] });
+    await app.listen(0);
+    const server = app.getHttpServer() as { address: () => AddressInfo };
+    return [app, `http://127.0.0.1:${String(server.address().port)}`];
+  };
+
+  it('sends a 404 render as a real 404, body and headers intact', async () => {
+    const [app, baseUrl] = await listen(E2ENotFoundModule);
+    try {
+      const res = await fetch(`${baseUrl}/missing-thing`);
+
+      expect(res.status).toBe(404);
+      expect(res.headers.get('x-render-note')).toBe('gone');
+      expect(await res.text()).toContain('not found');
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('sends a redirect render as a real redirect', async () => {
+    const [app, baseUrl] = await listen(E2ERedirectModule);
+    try {
+      // `redirect: 'manual'` so fetch reports the 301 rather than following it.
+      const res = await fetch(`${baseUrl}/old-thing`, { redirect: 'manual' });
+
+      expect(res.status).toBe(301);
+      expect(res.headers.get('location')).toBe('/');
+    } finally {
+      await app.close();
+    }
+  });
+});

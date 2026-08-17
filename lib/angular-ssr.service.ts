@@ -29,6 +29,28 @@ export const DEFAULT_CACHE_EXPIRATION_TIME = 60_000;
 type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
 
 /**
+ * The parts of the Web `Response` returned by `engine.handle()` that we read.
+ * Declared structurally rather than as `Response` because CommonEngine-era
+ * fixtures and test doubles supply only `text()`.
+ */
+interface AngularEngineResponse {
+  text: () => Promise<string>;
+  status?: number;
+  headers?: { forEach?: (cb: (value: string, name: string) => void) => void };
+}
+
+/**
+ * A completed render: the HTML plus whatever status and headers Angular
+ * attached to it. Kept together so the status survives as far as the Express
+ * response and the cache, instead of being dropped at `.text()`.
+ */
+interface RenderOutcome {
+  html: string;
+  status?: number;
+  headers?: Record<string, string>;
+}
+
+/**
  * Narrow the thrown value to a "module not found" failure from a dynamic
  * `import()` inside `bootstrap()`. Native Node gives us a structured
  * `code: 'ERR_MODULE_NOT_FOUND'` (ESM) or `'MODULE_NOT_FOUND'` (CJS),
@@ -193,6 +215,9 @@ export class AngularSSRService implements OnModuleInit {
         if (this.logger.enabled()) {
           this.logger.debug(`Cache hit (key=${cacheKey})`);
         }
+        // Replay the status and headers too. Serving a cached 404 body under
+        // a 200 would put the soft-404 straight back on every cache hit.
+        applyResponseOutcome(response, { status: cached.status, headers: cached.headers });
         return cached.content;
       }
     }
@@ -204,13 +229,20 @@ export class AngularSSRService implements OnModuleInit {
     const url = this.getRequestUrl(request);
 
     try {
-      const rendered = await this.invokeEngine(this.angularEngine, request, response, url);
-      const html = await this.applyAfterRender(rendered, { request, response, url });
+      const outcome = await this.invokeEngine(this.angularEngine, request, response, url);
+      const html = await this.applyAfterRender(outcome?.html ?? null, { request, response, url });
+
+      // After afterRender, so a transform that already finished the response
+      // (an errorHandler, a redirect written straight to `res`) isn't fought
+      // over. applyResponseOutcome is a no-op once headers are sent.
+      applyResponseOutcome(response, outcome);
 
       if (cacheKey !== null && html) {
         await this.cacheStorage.set(cacheKey, {
           content: html,
           expiresAt: Date.now() + this.cacheExpiresIn,
+          status: outcome?.status,
+          headers: outcome?.headers,
         });
       }
 
@@ -232,9 +264,12 @@ export class AngularSSRService implements OnModuleInit {
     request: Request,
     response: Response,
     url: string,
-  ): Promise<string | null> {
+  ): Promise<RenderOutcome | null> {
     if (this.isCommonEngine(engine)) {
-      return await this.renderWithCommonEngine(engine, request, response, url);
+      const html = await this.renderWithCommonEngine(engine, request, response, url);
+      // CommonEngine renders to a bare string — it has no Response object and
+      // therefore no status or headers to carry.
+      return html === null ? null : { html };
     }
     const angularRequest: Request | globalThis.Request = this.isNodeAppEngine(engine)
       ? request
@@ -280,17 +315,26 @@ export class AngularSSRService implements OnModuleInit {
     engine: AngularNodeAppEngine | AngularAppEngine,
     request: Request | globalThis.Request,
     requestContext: SSRRequestContext,
-  ): Promise<string | null> {
+  ): Promise<RenderOutcome | null> {
     const handle = engine.handle.bind(engine) as (
       r: Request | globalThis.Request,
       ctx?: SSRRequestContext,
-    ) => Promise<{ text: () => Promise<string> } | null | undefined> | null;
+    ) => Promise<AngularEngineResponse | null | undefined> | null;
     const angularResponse = await handle(request, requestContext);
     if (!angularResponse) {
       this.diagnoseNullEngineResponse(request);
       return null;
     }
-    return await angularResponse.text();
+
+    // Read status/headers before consuming the body: this is the only place
+    // the Response Angular built is still intact. Everything downstream sees
+    // a plain string, which is how RESPONSE_INIT writes and server-route
+    // redirects used to get silently dropped.
+    return {
+      html: await angularResponse.text(),
+      status: typeof angularResponse.status === 'number' ? angularResponse.status : undefined,
+      headers: collectHeaders(angularResponse.headers),
+    };
   }
 
   /**
@@ -448,5 +492,79 @@ function restoreHeaders(response: Response, snapshot: ReturnType<Response['getHe
     if (value !== undefined) {
       response.setHeader(name, value);
     }
+  }
+}
+
+/**
+ * Headers that describe a specific byte stream. Angular measured them against
+ * the body it produced, but `afterRender` transforms (nonce rewriting, critical
+ * CSS inlining) run afterwards and change the length, so copying these would
+ * describe the response incorrectly. Express recomputes Content-Length on
+ * `send()`; the rest are the connection's business, not the render's.
+ */
+const BODY_SCOPED_HEADERS = new Set([
+  'content-length',
+  'content-encoding',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+]);
+
+/** Lowercased header snapshot taken from a Web Fetch `Headers`. */
+function collectHeaders(
+  headers: AngularEngineResponse['headers'],
+): Record<string, string> | undefined {
+  if (!headers || typeof headers.forEach !== 'function') {
+    return undefined;
+  }
+
+  const collected: Record<string, string> = {};
+  // Web `Headers`, not an array — `forEach` is the one traversal every
+  // implementation and test double supports, so the unicorn rule misfires.
+  // eslint-disable-next-line unicorn/no-array-for-each
+  headers.forEach((value, name) => {
+    const lower = name.toLowerCase();
+    if (!BODY_SCOPED_HEADERS.has(lower)) {
+      collected[lower] = value;
+    }
+  });
+
+  return Object.keys(collected).length > 0 ? collected : undefined;
+}
+
+/**
+ * Copy a render's status and headers onto the Express response.
+ *
+ * Two deliberate restraints, both about not overruling code that has already
+ * spoken:
+ *
+ *  - The status is only adopted while `res.statusCode` is still Express's
+ *    untouched 200. An app that set a status during render — the documented
+ *    way to do this before Angular's own Response was propagated — keeps it.
+ *    That also means an explicit `res.status(200)` is indistinguishable from
+ *    the default and loses to Angular; say it through RESPONSE_INIT instead.
+ *  - Headers are only set when absent, so upstream middleware (CSP nonce,
+ *    auth cookies, CORS) wins over a server-route header of the same name.
+ */
+function applyResponseOutcome(
+  response: Response,
+  outcome: { status?: number; headers?: Record<string, string> } | null | undefined,
+): void {
+  // Nothing to do once the response is out the door — and Node throws on
+  // setHeader after send. A render that redirected via `res` lands here.
+  if (!outcome || response.headersSent) {
+    return;
+  }
+
+  if (outcome.headers) {
+    for (const [name, value] of Object.entries(outcome.headers)) {
+      if (response.getHeader(name) === undefined) {
+        response.setHeader(name, value);
+      }
+    }
+  }
+
+  if (outcome.status !== undefined && outcome.status !== 200 && response.statusCode === 200) {
+    response.statusCode = outcome.status;
   }
 }

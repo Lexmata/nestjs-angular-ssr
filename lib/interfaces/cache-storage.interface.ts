@@ -11,6 +11,30 @@ export interface CacheEntry {
    * Timestamp when this cache entry expires
    */
   expiresAt: number;
+
+  /**
+   * HTTP status the render produced, when Angular asked for one other than
+   * 200. Replayed on cache hits — without it a cached 404 body would be
+   * served as a 200, which is the soft-404 this cache would otherwise
+   * reintroduce on every hit.
+   *
+   * Optional so entries written by earlier versions (and custom CacheStorage
+   * implementations that don't know the field) still load.
+   */
+  status?: number;
+
+  /**
+   * Response headers the render produced, lowercased. Carries `Location` for
+   * redirects and anything a server route configured. Values may be arrays
+   * (`Set-Cookie` is kept as separate entries rather than comma-joined).
+   *
+   * Per-visitor headers are stripped before an entry is stored — see
+   * `cacheableOutcome` — because the default cache key carries no `Vary`
+   * awareness and replaying them would hand one visitor's session to another.
+   *
+   * Same optionality note as `status`.
+   */
+  headers?: Record<string, string | string[]>;
 }
 
 /**

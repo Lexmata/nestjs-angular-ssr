@@ -400,6 +400,41 @@ export class NotFoundComponent {
 }
 ```
 
+### Response status and headers
+
+The status and headers Angular attaches to its own render are applied to the Express response, so `RESPONSE_INIT` and server-route redirects work the way Angular documents them:
+
+```typescript
+import { Component, inject, RESPONSE_INIT } from '@angular/core';
+
+@Component({ selector: 'app-not-found', template: '<h1>Not found</h1>' })
+export class NotFoundComponent {
+  private readonly responseInit = inject(RESPONSE_INIT, { optional: true });
+
+  constructor() {
+    if (this.responseInit) {
+      this.responseInit.status = 404;
+    }
+  }
+}
+```
+
+A `redirectTo` with a `status` in `provideServerRendering(withRoutes([...]))` likewise goes out as a real redirect with its `Location` header, instead of an empty 200.
+
+Two rules govern how this is applied, both about not overruling code that already spoke:
+
+- **The status is only adopted while the Express response still carries the untouched default 200.** Setting `res.status(...)` directly through `REQUEST_CONTEXT` (as in the example above) still wins. The trade-off is that an explicit `res.status(200)` is indistinguishable from the default and loses to Angular — say it through `RESPONSE_INIT` instead.
+- **Headers are only set when not already present**, so upstream middleware (CSP nonce, auth cookies, CORS) beats a server-route header of the same name. `Content-Length`, `Content-Encoding`, and `Transfer-Encoding` are never copied: `afterRender` transforms change the body after Angular measured it, and Express recomputes the length on `send()`.
+
+When the render cache is enabled the status and headers are cached with the HTML, so a cached 404 is replayed as a 404 rather than a 200. Per-visitor output is never written to a shared entry:
+
+- A render that emits `Set-Cookie`, or whose `Cache-Control` says `no-store` or `private`, is **not cached at all** — it still gets its headers on the live response, it just re-renders next time. The default cache key is method + host + URL with no `Vary` awareness, so caching those would hand one visitor's session to the next.
+- `Authorization`, `WWW-Authenticate`, and `Proxy-Authenticate` are stripped from any entry that is stored.
+
+`Set-Cookie` is preserved as a list rather than collapsed: it is the one header the spec keeps as separate entries instead of comma-joining, so `CacheEntry.headers` values are `string | string[]`.
+
+> **Before v0.8.0** the render kept only `await angularResponse.text()` and every response went out as 200 with none of Angular's headers. Apps that worked around this by writing to `REQUEST_CONTEXT.response` keep working unchanged.
+
 ## Debug Logging
 
 Set the `ANGULAR_SSR_DEBUG` environment variable to enable verbose tracing across the module, service, and middleware. Warnings and errors are always emitted; only `log` / `debug` / `verbose` levels are gated.

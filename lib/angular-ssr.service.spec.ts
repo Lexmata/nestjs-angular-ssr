@@ -64,6 +64,9 @@ const createMockResponse = (): Response => {
   const headers = new Map<string, string | string[] | number>();
   return {
     headersSent: false,
+    // Express's untouched default. `applyResponseOutcome` treats 200 as
+    // "nobody has spoken yet", so this has to be present and mutable.
+    statusCode: 200,
     setHeader: vi.fn((name: string, value: string | string[] | number) => {
       headers.set(name.toLowerCase(), value);
     }),
@@ -564,6 +567,267 @@ describe('AngularSSRService', () => {
       );
 
       expect(engine.render.mock.calls.at(-1)?.[0].url).toBe('http://localhost:3000/');
+    });
+  });
+
+  describe('render() — response status and headers propagation', () => {
+    let engine: ReturnType<typeof createAppEngine>;
+
+    beforeEach(async () => {
+      engine = createAppEngine();
+      mockOptions.bootstrap = vi.fn().mockResolvedValue(engine);
+      service = new AngularSSRService(mockOptions);
+      await service.onModuleInit();
+    });
+
+    const engineResponse = (
+      html: string,
+      init: { status?: number; headers?: Record<string, string> } = {},
+    ) => ({
+      text: vi.fn().mockResolvedValue(html),
+      status: init.status ?? 200,
+      headers: new Headers(init.headers ?? {}),
+    });
+
+    it('adopts the status Angular set on the response', async () => {
+      engine.handle.mockResolvedValue(engineResponse('<html>gone</html>', { status: 404 }));
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('leaves the default 200 alone when Angular renders normally', async () => {
+      engine.handle.mockResolvedValue(engineResponse('<html>ok</html>', { status: 200 }));
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('carries a redirect status and its Location header', async () => {
+      // @angular/ssr builds redirects as Response(null, {status, Location}).
+      // Flattening that to .text() used to emit an empty 200.
+      engine.handle.mockResolvedValue(
+        engineResponse('', { status: 301, headers: { Location: '/' } }),
+      );
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(301);
+      expect(res.getHeader('location')).toBe('/');
+    });
+
+    it('does not overrule a status the app set during render', async () => {
+      // Apps written against the old behaviour set the status on `res`
+      // directly; Angular's untouched 200 must not clobber it.
+      engine.handle.mockResolvedValue(engineResponse('<html>x</html>', { status: 200 }));
+      const res = createMockResponse();
+      (res as unknown as { statusCode: number }).statusCode = 404;
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('does not overwrite a header upstream middleware already set', async () => {
+      engine.handle.mockResolvedValue(
+        engineResponse('<html>x</html>', { headers: { 'x-custom': 'from-angular' } }),
+      );
+      const res = createMockResponse();
+      res.setHeader('x-custom', 'from-middleware');
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.getHeader('x-custom')).toBe('from-middleware');
+    });
+
+    it('skips body-scoped headers that afterRender transforms invalidate', async () => {
+      engine.handle.mockResolvedValue(
+        engineResponse('<html>x</html>', {
+          headers: { 'content-length': '9999', 'content-language': 'en' },
+        }),
+      );
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.getHeader('content-length')).toBeUndefined();
+      expect(res.getHeader('content-language')).toBe('en');
+    });
+
+    it('does nothing once the render already finished the response', async () => {
+      // A component that called res.redirect() mid-render owns the response.
+      engine.handle.mockResolvedValue(engineResponse('<html>x</html>', { status: 404 }));
+      const res = createMockResponse();
+      (res as unknown as { headersSent: boolean }).headersSent = true;
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('keeps an app-set status when Angular asks for a different one', async () => {
+      // The `res.statusCode === 200` restraint: whoever spoke first wins, even
+      // when Angular has an opinion of its own. Without this the library would
+      // downgrade an app's deliberate 503 to Angular's 404.
+      engine.handle.mockResolvedValue(engineResponse('<html>x</html>', { status: 404 }));
+      const res = createMockResponse();
+      (res as unknown as { statusCode: number }).statusCode = 503;
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.statusCode).toBe(503);
+    });
+
+    it('keeps every Set-Cookie, not just the last one', async () => {
+      // Headers.forEach yields set-cookie as separate entries rather than
+      // comma-joining, so a naive record collapses them to the final cookie.
+      const headers = new Headers();
+      headers.append('Set-Cookie', 'a=1; Path=/');
+      headers.append('Set-Cookie', 'b=2; Path=/');
+      engine.handle.mockResolvedValue({
+        text: vi.fn().mockResolvedValue('<html>x</html>'),
+        status: 200,
+        headers,
+      });
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.getHeader('set-cookie')).toEqual(['a=1; Path=/', 'b=2; Path=/']);
+    });
+
+    it('does not copy a stale ETag that afterRender would invalidate', async () => {
+      // Express only generates a correct ETag when none is set, so a stale one
+      // both lies and suppresses the right answer.
+      engine.handle.mockResolvedValue(
+        engineResponse('<html>x</html>', { headers: { ETag: 'W/"stale"' } }),
+      );
+      const res = createMockResponse();
+
+      await service.render(createMockRequest(), res);
+
+      expect(res.getHeader('etag')).toBeUndefined();
+    });
+
+    it('replays status and headers on a cache hit', async () => {
+      const cachingService = new AngularSSRService({ ...mockOptions, cache: true });
+      await cachingService.onModuleInit();
+      engine.handle.mockResolvedValue(
+        engineResponse('<html>gone</html>', { status: 404, headers: { 'x-note': 'n' } }),
+      );
+
+      const first = createMockResponse();
+      await cachingService.render(createMockRequest(), first);
+      expect(first.statusCode).toBe(404);
+
+      // Second request must not serve the cached 404 body as a 200.
+      const second = createMockResponse();
+      const html = await cachingService.render(createMockRequest(), second);
+
+      expect(engine.handle).toHaveBeenCalledOnce();
+      expect(html).toBe('<html>gone</html>');
+      expect(second.statusCode).toBe(404);
+      expect(second.getHeader('x-note')).toBe('n');
+    });
+
+    describe('cache safety', () => {
+      const renderTwice = async (
+        init: { status?: number; headers?: Record<string, string> },
+        appendCookies: string[] = [],
+      ): Promise<Response> => {
+        const caching = new AngularSSRService({ ...mockOptions, cache: true });
+        await caching.onModuleInit();
+
+        const headers = new Headers(init.headers ?? {});
+        for (const cookie of appendCookies) {
+          headers.append('Set-Cookie', cookie);
+        }
+        engine.handle.mockResolvedValue({
+          text: vi.fn().mockResolvedValue('<html>x</html>'),
+          status: init.status ?? 200,
+          headers,
+        });
+
+        await caching.render(createMockRequest(), createMockResponse());
+        const second = createMockResponse();
+        await caching.render(createMockRequest(), second);
+        return second;
+      };
+
+      it("never replays one visitor's Set-Cookie to the next", async () => {
+        // The default cache key is method + host + URL with no Vary awareness,
+        // so caching a session cookie would hand visitor A's session to B.
+        // Visitor A's render mints a cookie; visitor B's does not. If the
+        // entry were cached, B would be served A's cookie.
+        const caching = new AngularSSRService({ ...mockOptions, cache: true });
+        await caching.onModuleInit();
+
+        const withCookie = new Headers();
+        withCookie.append('Set-Cookie', 'session=USER-A-SECRET; Path=/');
+        engine.handle
+          .mockResolvedValueOnce({
+            text: vi.fn().mockResolvedValue('<html>x</html>'),
+            status: 200,
+            headers: withCookie,
+          })
+          .mockResolvedValueOnce({
+            text: vi.fn().mockResolvedValue('<html>x</html>'),
+            status: 200,
+            headers: new Headers(),
+          });
+
+        const visitorA = createMockResponse();
+        await caching.render(createMockRequest(), visitorA);
+        const visitorB = createMockResponse();
+        await caching.render(createMockRequest(), visitorB);
+
+        expect(visitorA.getHeader('set-cookie')).toEqual(['session=USER-A-SECRET; Path=/']);
+        // B re-rendered instead of hitting a poisoned entry, and got no cookie.
+        expect(engine.handle).toHaveBeenCalledTimes(2);
+        expect(visitorB.getHeader('set-cookie')).toBeUndefined();
+      });
+
+      it('re-renders rather than caching a response marked no-store', async () => {
+        const second = await renderTwice({ headers: { 'Cache-Control': 'no-store' } });
+
+        expect(engine.handle).toHaveBeenCalledTimes(2);
+        expect(second.getHeader('cache-control')).toBe('no-store');
+      });
+
+      it('re-renders rather than caching a response marked private', async () => {
+        await renderTwice({ headers: { 'Cache-Control': 'max-age=60, private' } });
+
+        expect(engine.handle).toHaveBeenCalledTimes(2);
+      });
+
+      it('still caches a plain shareable response', async () => {
+        // The guard must not disable caching wholesale.
+        await renderTwice({ headers: { 'Cache-Control': 'public, max-age=60' } });
+
+        expect(engine.handle).toHaveBeenCalledOnce();
+      });
+
+      it('applies a per-visitor header to the live response even though it is not cached', async () => {
+        const caching = new AngularSSRService({ ...mockOptions, cache: true });
+        await caching.onModuleInit();
+        const headers = new Headers();
+        headers.append('Set-Cookie', 'session=abc; Path=/');
+        engine.handle.mockResolvedValue({
+          text: vi.fn().mockResolvedValue('<html>x</html>'),
+          status: 200,
+          headers,
+        });
+
+        const res = createMockResponse();
+        await caching.render(createMockRequest(), res);
+
+        expect(res.getHeader('set-cookie')).toEqual(['session=abc; Path=/']);
+      });
     });
   });
 

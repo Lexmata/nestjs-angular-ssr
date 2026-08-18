@@ -422,7 +422,10 @@ class E2ENotFoundModule {}
   imports: [
     AngularSSRModule.forRoot({
       browserDistFolder: '/tmp/never-read-during-tests',
-      bootstrap: () => Promise.resolve(buildStatusEngine(301, { Location: '/' })),
+      // `null` body is what @angular/ssr's createRedirectResponse actually
+      // builds. Flattening that with .text() gave an empty string, which is
+      // precisely how the redirect used to vanish into a 200.
+      bootstrap: () => Promise.resolve(buildStatusEngine(301, { Location: '/' }, null)),
     }),
   ],
 })

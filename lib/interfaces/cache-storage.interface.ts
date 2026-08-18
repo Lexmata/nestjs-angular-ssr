@@ -25,10 +25,16 @@ export interface CacheEntry {
 
   /**
    * Response headers the render produced, lowercased. Carries `Location` for
-   * redirects and anything a server route configured. Same optionality note
-   * as `status`.
+   * redirects and anything a server route configured. Values may be arrays
+   * (`Set-Cookie` is kept as separate entries rather than comma-joined).
+   *
+   * Per-visitor headers are stripped before an entry is stored — see
+   * `cacheableOutcome` — because the default cache key carries no `Vary`
+   * awareness and replaying them would hand one visitor's session to another.
+   *
+   * Same optionality note as `status`.
    */
-  headers?: Record<string, string>;
+  headers?: Record<string, string | string[]>;
 }
 
 /**

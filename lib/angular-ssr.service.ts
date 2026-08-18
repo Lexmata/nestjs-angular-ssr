@@ -36,7 +36,10 @@ type AngularEngine = AngularAppEngine | AngularNodeAppEngine | CommonEngine;
 interface AngularEngineResponse {
   text: () => Promise<string>;
   status?: number;
-  headers?: { forEach?: (cb: (value: string, name: string) => void) => void };
+  headers?: {
+    forEach?: (cb: (value: string, name: string) => void) => void;
+    getSetCookie?: () => string[];
+  };
 }
 
 /**
@@ -47,7 +50,7 @@ interface AngularEngineResponse {
 interface RenderOutcome {
   html: string;
   status?: number;
-  headers?: Record<string, string>;
+  headers?: Record<string, string | string[]>;
 }
 
 /**
@@ -232,18 +235,17 @@ export class AngularSSRService implements OnModuleInit {
       const outcome = await this.invokeEngine(this.angularEngine, request, response, url);
       const html = await this.applyAfterRender(outcome?.html ?? null, { request, response, url });
 
-      // After afterRender, so a transform that already finished the response
-      // (an errorHandler, a redirect written straight to `res`) isn't fought
-      // over. applyResponseOutcome is a no-op once headers are sent.
+      // Must run AFTER applyAfterRender, not before. applyAfterRender snapshots
+      // the response headers and, if a transform throws, restoreHeaders removes
+      // anything not in that snapshot — so applying Angular's headers first
+      // would see them stripped as though a transform had added them. Running
+      // last also means a transform that already finished the response (an
+      // errorHandler, a redirect written straight to `res`) is not fought over,
+      // since applyResponseOutcome no-ops once headers are sent.
       applyResponseOutcome(response, outcome);
 
       if (cacheKey !== null && html) {
-        await this.cacheStorage.set(cacheKey, {
-          content: html,
-          expiresAt: Date.now() + this.cacheExpiresIn,
-          status: outcome?.status,
-          headers: outcome?.headers,
-        });
+        await this.storeRender(cacheKey, html, outcome, url);
       }
 
       return html;
@@ -257,6 +259,35 @@ export class AngularSSRService implements OnModuleInit {
 
       throw error;
     }
+  }
+
+  /**
+   * Write a render to the cache unless it belongs to a single visitor. The
+   * default cache key is method + host + URL with no `Vary` awareness, so a
+   * session cookie minted during one render would otherwise be replayed to
+   * everyone else asking for the same URL until the entry expired.
+   */
+  private async storeRender(
+    cacheKey: string,
+    html: string,
+    outcome: RenderOutcome | null,
+    url: string,
+  ): Promise<void> {
+    const shareable = outcome ? cacheableOutcome(outcome) : { status: undefined };
+
+    if (shareable === null) {
+      if (this.logger.enabled()) {
+        this.logger.debug(`Not caching ${url}: render is per-visitor`);
+      }
+      return;
+    }
+
+    await this.cacheStorage.set(cacheKey, {
+      content: html,
+      expiresAt: Date.now() + this.cacheExpiresIn,
+      status: shareable.status,
+      headers: shareable.headers,
+    });
   }
 
   private async invokeEngine(
@@ -498,9 +529,13 @@ function restoreHeaders(response: Response, snapshot: ReturnType<Response['getHe
 /**
  * Headers that describe a specific byte stream. Angular measured them against
  * the body it produced, but `afterRender` transforms (nonce rewriting, critical
- * CSS inlining) run afterwards and change the length, so copying these would
- * describe the response incorrectly. Express recomputes Content-Length on
- * `send()`; the rest are the connection's business, not the render's.
+ * CSS inlining) run afterwards and change the bytes, so copying these would
+ * describe the response incorrectly.
+ *
+ * `etag` belongs here for the same reason and matters most: Express only
+ * generates a correct one when none is set (`generateETag = !this.get('ETag')`),
+ * so a stale value both lies and suppresses the right answer — a client with a
+ * matching `If-None-Match` gets a 304 and keeps rendering pre-transform HTML.
  */
 const BODY_SCOPED_HEADERS = new Set([
   'content-length',
@@ -508,17 +543,36 @@ const BODY_SCOPED_HEADERS = new Set([
   'transfer-encoding',
   'connection',
   'keep-alive',
+  'etag',
+  'content-md5',
+  'digest',
+]);
+
+/**
+ * Headers that are specific to one visitor and must never be written into a
+ * shared cache entry. They are still applied to the live response — the danger
+ * is only in replaying them to somebody else.
+ *
+ * The default cache key is method + host + URL with no `Vary` awareness, so
+ * without this a session cookie minted during one visitor's render would be
+ * handed to every other visitor of the same URL until the entry expired.
+ */
+const PER_VISITOR_HEADERS = new Set([
+  'set-cookie',
+  'authorization',
+  'www-authenticate',
+  'proxy-authenticate',
 ]);
 
 /** Lowercased header snapshot taken from a Web Fetch `Headers`. */
 function collectHeaders(
   headers: AngularEngineResponse['headers'],
-): Record<string, string> | undefined {
+): Record<string, string | string[]> | undefined {
   if (!headers || typeof headers.forEach !== 'function') {
     return undefined;
   }
 
-  const collected: Record<string, string> = {};
+  const collected: Record<string, string | string[]> = {};
   // Web `Headers`, not an array — `forEach` is the one traversal every
   // implementation and test double supports, so the unicorn rule misfires.
   // eslint-disable-next-line unicorn/no-array-for-each
@@ -529,7 +583,58 @@ function collectHeaders(
     }
   });
 
+  // `Set-Cookie` is the one header the spec keeps as separate entries rather
+  // than comma-joining, so the forEach above overwrote each cookie with the
+  // next and kept only the last. getSetCookie() is the only way to see them
+  // all; Node's setHeader takes the array as-is.
+  if (typeof headers.getSetCookie === 'function') {
+    const cookies = headers.getSetCookie();
+    if (cookies.length > 0) {
+      collected['set-cookie'] = cookies;
+    }
+  }
+
   return Object.keys(collected).length > 0 ? collected : undefined;
+}
+
+/**
+ * Strip the parts of a render that belong to one visitor, leaving what is safe
+ * to replay from a shared cache. Returns null when the render asked not to be
+ * stored at all.
+ */
+function cacheableOutcome(outcome: RenderOutcome): {
+  status?: number;
+  headers?: Record<string, string | string[]>;
+} | null {
+  const headers = outcome.headers;
+  if (!headers) {
+    return { status: outcome.status };
+  }
+
+  // Honour the render's own instruction. `private` means "one visitor only",
+  // which is exactly what a shared render cache would violate.
+  const cacheControl = headers['cache-control'];
+  if (typeof cacheControl === 'string' && /\b(?:no-store|private)\b/i.test(cacheControl)) {
+    return null;
+  }
+
+  // A render that mints a cookie is per-visitor by construction, even without
+  // a Cache-Control saying so.
+  if ('set-cookie' in headers) {
+    return null;
+  }
+
+  const shareable: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!PER_VISITOR_HEADERS.has(name)) {
+      shareable[name] = value;
+    }
+  }
+
+  return {
+    status: outcome.status,
+    headers: Object.keys(shareable).length > 0 ? shareable : undefined,
+  };
 }
 
 /**
@@ -548,7 +653,7 @@ function collectHeaders(
  */
 function applyResponseOutcome(
   response: Response,
-  outcome: { status?: number; headers?: Record<string, string> } | null | undefined,
+  outcome: { status?: number; headers?: Record<string, string | string[]> } | null | undefined,
 ): void {
   // Nothing to do once the response is out the door — and Node throws on
   // setHeader after send. A render that redirected via `res` lands here.
@@ -564,7 +669,9 @@ function applyResponseOutcome(
     }
   }
 
-  if (outcome.status !== undefined && outcome.status !== 200 && response.statusCode === 200) {
+  // No `status !== 200` check: assigning 200 while statusCode is already 200
+  // is a no-op, so it would read as a restraint while guarding nothing.
+  if (outcome.status !== undefined && response.statusCode === 200) {
     response.statusCode = outcome.status;
   }
 }
